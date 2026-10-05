@@ -1,0 +1,61 @@
+"""Test giao diện Streamlit bằng AppTest (chạy offline với LLM giả)."""
+
+from __future__ import annotations
+
+import pathlib
+
+from streamlit.testing.v1 import AppTest
+
+APP_PATH = str(pathlib.Path(__file__).resolve().parents[1] / "app.py")
+
+
+def _run_offline_app() -> AppTest:
+    app = AppTest.from_file(APP_PATH, default_timeout=180)
+    app.run()
+    # Bật chế độ LLM giả để không cần API key
+    app.checkbox[0].set_value(True)
+    return app
+
+
+def test_app_boots_without_exception():
+    app = _run_offline_app()
+    assert not app.exception
+    assert app.button  # có nút "Lập kế hoạch"
+
+
+def test_app_renders_plan_after_click():
+    app = _run_offline_app()
+    app.button[0].click().run()
+
+    assert not app.exception
+
+    subheaders = " | ".join(item.value for item in app.subheader)
+    assert "Khoảng trống kỹ năng" in subheaders
+    assert "Lộ trình học" in subheaders
+    assert "Lịch tuần" in subheaders
+    assert "Hội đồng persona" in subheaders
+
+    # Có bảng dữ liệu: gap, module, lịch tuần
+    assert len(app.dataframe) >= 3
+
+    # Có hội đồng nhiều giọng
+    chat_text = " ".join(item.value for item in app.markdown)
+    assert "Người Phản Biện" in chat_text
+    assert "Người Động Viên" in chat_text
+
+
+def test_app_adjust_flow_moves_to_next_week():
+    app = _run_offline_app()
+    app.button[0].click().run()
+    assert not app.exception
+
+    # Nút "Điều chỉnh kế hoạch" xuất hiện sau khi có kế hoạch
+    adjust_buttons = [b for b in app.button if "Điều chỉnh" in b.label]
+    assert adjust_buttons
+
+    adjust_buttons[0].click().run()
+    assert not app.exception
+
+    success_text = " ".join(item.value for item in app.success)
+    assert "Đã điều chỉnh" in success_text
+    assert "tuần 1 → tuần 2" in success_text
