@@ -1,0 +1,35 @@
+[project]
+name = "lifeos"
+version = "0.1.0"
+description = "Life OS - multi-agent personality orchestrator for career, learning and schedule"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "langgraph>=0.2.60",
+    "langchain-core>=0.3.30",
+    "langchain-openai>=0.2.14",
+    "chromadb>=0.5.20",
+    "sqlalchemy>=2.0.36",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "python-dotenv>=1.0.1",
+    "icalendar>=5.0.13",
+    "streamlit>=1.40",
+    "openai>=1.54",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lifeos"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+asyncio_mode = "auto"

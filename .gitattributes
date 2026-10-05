@@ -1,0 +1,10 @@
+# Chuẩn hoá dấu xuống dòng để tránh diff nhiễu giữa Windows/macOS/Linux
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
