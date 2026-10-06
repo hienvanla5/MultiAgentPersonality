@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://api.openai.com/v1"
     llm_model: str = "gpt-4o-mini"
     llm_temperature: float = 0.4
+    # Timeout mỗi lời gọi (giây). Model suy luận có thể cần 60-180s.
+    llm_timeout: float = 120.0
+    # 0 = không thử lại, để lỗi trả về ngay thay vì treo im lặng.
+    llm_max_retries: int = 0
 
     db_path: str = "data/lifeos.db"
     chroma_path: str = "data/chroma"
