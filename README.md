@@ -124,9 +124,14 @@ cả luồng mất 5 phút và trông như bị treo. Đo thực tế trên mộ
 
 | Model | TTFT | Tổng | Structured output |
 |---|---|---|---|
-| `deepseek-v4.1-flash` | 2.1s | 2.8s | ✅ |
-| `glm-5.3-flash` | 3.1s | 3.6s | ❌ trả JSON bọc trong ```` ``` ```` |
+| `deepseek-v4.1-flash` | 2.1s | 2.8s | ✅ `json_schema` |
+| `glm-5.3-flash` | 3.1s | 3.6s | ⚠️ cần cascade (tầng tool calling) |
 | `qwen3.8-flash` (model suy luận) | 31.0s | 31.9s | chậm |
+| `gemini-3.8-flash` | — | — | ❌ 502 upstream |
+
+Cascade thực sự có tác dụng: `glm-5.3-flash` hỏng ở tầng `json_schema` nhưng chạy
+được qua tầng tool calling — nếu chỉ dùng `with_structured_output` trần thì model
+này không dùng được.
 
 **Khuyến nghị:** dùng model "flash" không suy luận. Nếu buộc dùng model suy luận,
 tăng `LLM_TIMEOUT` lên 180-300.
@@ -146,8 +151,9 @@ Khi tầng 1-2 hỏng, kết quả được ghi nhớ nên các lời gọi sau 
 ### Chẩn đoán nhanh
 
 ```powershell
-uv run python scripts/diagnose_llm.py   # đo từng tầng: DNS, TCP, HTTP, chat, structured
+uv run python scripts/diagnose_llm.py   # đo từng tầng: DNS, TCP, HTTP, chat, structured, cascade
 uv run python scripts/probe_models.py   # so sánh độ trễ nhiều model
+uv run python scripts/probe_models.py deepseek-v4.1-flash glm-5.3-flash   # chỉ định model
 ```
 
 ---
