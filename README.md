@@ -108,12 +108,47 @@ luồng mà không tốn phí API.
 
 Mọi API tương thích chuẩn chat-completions đều dùng được — chỉ cần đổi `.env`:
 
-| Biến | Ý nghĩa |
-|---|---|
-| `LLM_API_KEY` | Khoá API |
-| `LLM_BASE_URL` | Endpoint (mặc định `https://api.openai.com/v1`) |
-| `LLM_MODEL` | Tên model |
-| `LLM_TEMPERATURE` | Độ sáng tạo |
+| Biến | Ý nghĩa | Mặc định |
+|---|---|---|
+| `LLM_API_KEY` | Khoá API | — |
+| `LLM_BASE_URL` | Endpoint | `https://api.openai.com/v1` |
+| `LLM_MODEL` | Tên model | `gpt-4o-mini` |
+| `LLM_TEMPERATURE` | Độ sáng tạo | `0.4` |
+| `LLM_TIMEOUT` | Timeout mỗi lời gọi (giây) | `120` |
+| `LLM_MAX_RETRIES` | Số lần thử lại khi lỗi | `0` |
+
+### Chọn model: nguyên nhân "treo" phổ biến nhất
+
+Cả luồng lập kế hoạch cần **~10 lời gọi LLM liên tiếp**. Nếu mỗi lời gọi mất 30s,
+cả luồng mất 5 phút và trông như bị treo. Đo thực tế trên một gateway đa model:
+
+| Model | TTFT | Tổng | Structured output |
+|---|---|---|---|
+| `deepseek-v4.1-flash` | 2.1s | 2.8s | ✅ |
+| `glm-5.3-flash` | 3.1s | 3.6s | ❌ trả JSON bọc trong ```` ``` ```` |
+| `qwen3.8-flash` (model suy luận) | 31.0s | 31.9s | chậm |
+
+**Khuyến nghị:** dùng model "flash" không suy luận. Nếu buộc dùng model suy luận,
+tăng `LLM_TIMEOUT` lên 180-300.
+
+### Gateway không hỗ trợ `json_schema`
+
+Nhiều proxy đa model **không thực thi** `response_format: json_schema` — model vẫn
+trả markdown. `lifeos/llm.py` xử lý bằng cascade 3 tầng:
+
+1. structured output gốc (`json_schema`)
+2. structured output qua tool calling
+3. yêu cầu JSON dạng văn bản → tự trích xuất (bỏ code fence, tìm object cân bằng),
+   thử lại 1 lần
+
+Khi tầng 1-2 hỏng, kết quả được ghi nhớ nên các lời gọi sau đi thẳng vào tầng 3.
+
+### Chẩn đoán nhanh
+
+```powershell
+uv run python scripts/diagnose_llm.py   # đo từng tầng: DNS, TCP, HTTP, chat, structured
+uv run python scripts/probe_models.py   # so sánh độ trễ nhiều model
+```
 
 ---
 
@@ -150,11 +185,15 @@ uv run pytest -q
 - `test_personas.py` — persona + tone adapter + câu hỏi làm rõ
 - `test_calendar.py` — parse ICS, khoảng bận, dịch giờ
 - `test_scheduler.py` — ngân sách giờ, tránh khoảng bận, chuẩn hoá
+- `test_llm.py` — trích JSON chịu lỗi + cascade structured output
 - `test_graph.py` — tích hợp: lập kế hoạch, vòng giảm tải, điều chỉnh, lưu trữ
+- `test_app.py` — giao diện Streamlit qua `AppTest` (chạy offline)
 - `test_eval.py` — **LLM-as-judge** chấm `coherence` + `tone_fit`
   (tự động bỏ qua nếu chưa có `LLM_API_KEY`)
 
-Test dùng `FakeLLM` tất định nên chạy nhanh và không tốn API.
+Test dùng `FakeLLM` tất định nên chạy nhanh và không tốn API. Riêng `test_eval.py`
+gọi API thật và mất vài phút — đó là bài kiểm chứng end-to-end duy nhất chạm
+endpoint thật.
 
 ---
 
