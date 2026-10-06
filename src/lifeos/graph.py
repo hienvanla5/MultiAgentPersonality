@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional, TypedDict
+from typing import Iterator, Optional, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
@@ -288,6 +288,50 @@ def adjust_graph(llm: LLM, store: Optional[Store] = None):
 
 # --- API cấp cao ---
 
+# Nhãn tiến độ cho từng node (UI hiển thị khi model chạy chậm).
+NODE_LABELS: dict[str, str] = {
+    "career": "🎯 Chiến Lược Gia đang phân tích khoảng trống kỹ năng...",
+    "curriculum": "📚 Giáo Viên đang thiết kế lộ trình học...",
+    "schedule": "⏰ Huấn Luyện Viên đang xếp lịch tuần...",
+    "reduce_load": "⚠️ Phát hiện quá tải — đang giảm tải...",
+    "roundtable": "🔍💪 Hội đồng đang tranh luận...",
+    "synthesize": "🧭 Người Dẫn Đường đang tổng hợp...",
+    "save": "💾 Đang lưu kế hoạch...",
+    "assess": "🔍 Người Phản Biện đang phân tích sự cố...",
+    "reschedule": "⏰ Đang lập lịch mới...",
+    "finalize": "🧭 Đang chốt điều chỉnh...",
+}
+
+
+def iter_plan(
+    profile: UserProfile,
+    *,
+    llm: Optional[LLM] = None,
+    store: Optional[Store] = None,
+    memory: Optional[VectorMemory] = None,
+    goal: Optional[Goal] = None,
+    busy: Optional[dict] = None,
+) -> Iterator[tuple[str, dict]]:
+    """Chạy đồ thị lập kế hoạch, yield (tên_node, cập_nhật) sau mỗi bước.
+
+    Dùng để hiển thị tiến độ: model suy luận có thể mất vài phút cho cả luồng.
+    """
+    llm = llm or get_llm()
+    goal = goal or Goal(description=profile.goal_summary or "Mục tiêu cá nhân")
+    tone = build_tone_instruction(profile)
+    app = build_graph(llm, store=store, memory=memory)
+    state: BuildState = {
+        "profile": profile,
+        "goal": goal,
+        "tone": tone,
+        "busy": busy or {},
+        "load_factor": 1.0,
+        "replanned": False,
+    }
+    for event in app.stream(state):
+        for node_name, update in event.items():
+            yield node_name, update or {}
+
 
 def create_plan(
     profile: UserProfile,
@@ -299,21 +343,40 @@ def create_plan(
     busy: Optional[dict] = None,
 ) -> LifeOSPlan:
     """Lập kế hoạch đầy đủ cho một hồ sơ người dùng."""
+    plan: Optional[LifeOSPlan] = None
+    for _node, update in iter_plan(
+        profile, llm=llm, store=store, memory=memory, goal=goal, busy=busy
+    ):
+        if "plan" in update:
+            plan = update["plan"]
+    if plan is None:
+        raise RuntimeError("Đồ thị lập kế hoạch không trả về kết quả.")
+    return plan
+
+
+def iter_adjust(
+    plan: LifeOSPlan,
+    profile: UserProfile,
+    reason: str,
+    *,
+    missed: Optional[list[str]] = None,
+    llm: Optional[LLM] = None,
+    store: Optional[Store] = None,
+) -> Iterator[tuple[str, dict]]:
+    """Chạy đồ thị điều chỉnh, yield (tên_node, cập_nhật) sau mỗi bước."""
     llm = llm or get_llm()
-    goal = goal or Goal(description=profile.goal_summary or "Mục tiêu cá nhân")
     tone = build_tone_instruction(profile)
-    app = build_graph(llm, store=store, memory=memory)
-    final_state = app.invoke(
-        {
-            "profile": profile,
-            "goal": goal,
-            "tone": tone,
-            "busy": busy or {},
-            "load_factor": 1.0,
-            "replanned": False,
-        }
-    )
-    return final_state["plan"]
+    app = adjust_graph(llm, store=store)
+    state: AdjustState = {
+        "profile": profile,
+        "plan": plan,
+        "reason": reason,
+        "missed": missed or [],
+        "tone": tone,
+    }
+    for event in app.stream(state):
+        for node_name, update in event.items():
+            yield node_name, update or {}
 
 
 def adjust_plan(
@@ -326,16 +389,15 @@ def adjust_plan(
     store: Optional[Store] = None,
 ) -> tuple[LifeOSPlan, AdjustmentEvent]:
     """Điều chỉnh kế hoạch khi người dùng lệch tiến độ."""
-    llm = llm or get_llm()
-    tone = build_tone_instruction(profile)
-    app = adjust_graph(llm, store=store)
-    final_state = app.invoke(
-        {
-            "profile": profile,
-            "plan": plan,
-            "reason": reason,
-            "missed": missed or [],
-            "tone": tone,
-        }
-    )
-    return final_state["plan_out"], final_state["event"]
+    new_plan: Optional[LifeOSPlan] = None
+    event: Optional[AdjustmentEvent] = None
+    for _node, update in iter_adjust(
+        plan, profile, reason, missed=missed, llm=llm, store=store
+    ):
+        if "plan_out" in update:
+            new_plan = update["plan_out"]
+        if "event" in update:
+            event = update["event"]
+    if new_plan is None or event is None:
+        raise RuntimeError("Đồ thị điều chỉnh không trả về kết quả.")
+    return new_plan, event
