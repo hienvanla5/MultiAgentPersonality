@@ -123,7 +123,28 @@ def main() -> int:
         print(f"  OK  ({time.time() - t0:.2f}s) -> {out!r}")
     except Exception as exc:
         print(f"  FAIL {type(exc).__name__}: {exc}  ({time.time() - t0:.2f}s)")
-        print("  -> Endpoint co the khong ho tro tool/json_schema.")
+        print("  -> Endpoint khong ho tro tool/json_schema o tang goc.")
+
+    _step("7. Cascade ma agent thuc dung (LangChainLLM.structured)")
+    from lifeos.llm import LangChainLLM
+
+    t0 = time.time()
+    try:
+        llm = LangChainLLM(model=s.llm_model, temperature=0)
+        out = llm.structured(
+            "Ban chi tra ve JSON dung schema.",
+            "Tra ve ok=true va note='ok'.",
+            Probe,
+        )
+        route = (
+            "structured goc"
+            if llm._native_structured_ok
+            else "du phong text+JSON"
+        )
+        print(f"  OK  ({time.time() - t0:.2f}s) -> {out!r}")
+        print(f"  duong di: {route}")
+    except Exception as exc:
+        print(f"  FAIL {type(exc).__name__}: {str(exc)[:250]}  ({time.time() - t0:.2f}s)")
 
     return 0
 
