@@ -9,7 +9,7 @@ import argparse
 
 from lifeos.clarify import clarifying_questions
 from lifeos.demo import DemoLLM
-from lifeos.graph import adjust_plan, create_plan
+from lifeos.graph import NODE_LABELS, iter_adjust, iter_plan
 from lifeos.llm import get_llm, has_api_key
 from lifeos.models import (
     CommunicationStyle,
@@ -118,18 +118,34 @@ def main() -> None:
         llm = DemoLLM()
         print("Chế độ: LLM giả (offline demo)")
 
-    plan = create_plan(profile, llm=llm)
+    plan = None
+    print("\n--- Tiến độ lập kế hoạch ---")
+    for node, update in iter_plan(profile, llm=llm):
+        print(f"  {NODE_LABELS.get(node, node)}")
+        if "plan" in update:
+            plan = update["plan"]
+    if plan is None:
+        raise SystemExit("Đồ thị không trả về kế hoạch.")
     print_plan(plan)
 
     if not args.skip_adjust:
-        new_plan, event = adjust_plan(
+        print("\n--- Tiến độ điều chỉnh ---")
+        new_plan = None
+        event = None
+        for node, update in iter_adjust(
             plan,
             profile,
             reason="Trượt 2 buổi vì deadline gấp ở công việc chính",
             missed=["Học SQL: SELECT, WHERE, JOIN", "Luyện SQL trên SQLBolt"],
             llm=llm,
-        )
-        print_plan(new_plan, event)
+        ):
+            print(f"  {NODE_LABELS.get(node, node)}")
+            if "plan_out" in update:
+                new_plan = update["plan_out"]
+            if "event" in update:
+                event = update["event"]
+        if new_plan is not None:
+            print_plan(new_plan, event)
 
     if isinstance(llm, DemoLLM):
         print(f"\n(các lời gọi LLM: {llm.calls})")

@@ -8,8 +8,9 @@ from __future__ import annotations
 import streamlit as st
 
 from lifeos.clarify import clarifying_questions
+from lifeos.config import get_settings
 from lifeos.demo import DemoLLM
-from lifeos.graph import adjust_plan, create_plan
+from lifeos.graph import NODE_LABELS, iter_adjust, iter_plan
 from lifeos.llm import get_llm, has_api_key
 from lifeos.models import (
     CommunicationStyle,
@@ -101,6 +102,19 @@ def render_sidebar() -> tuple[UserProfile, bool]:
         strictness=STRICT_OPTIONS[strict_label],
         notes=notes,
     )
+
+    settings = get_settings()
+    if offline:
+        st.sidebar.caption("Chế độ: LLM giả (tức thời, không gọi mạng)")
+    else:
+        st.sidebar.caption(
+            f"Model: `{settings.llm_model}` · timeout {settings.llm_timeout:.0f}s "
+            f"· thử lại {settings.llm_max_retries}"
+        )
+        st.sidebar.caption(
+            "Model suy luận có thể mất 30-60s mỗi bước — cả luồng vài phút. "
+            "Nếu quá chậm, đổi `LLM_MODEL` sang `deepseek-v4.1-flash`."
+        )
     return profile, offline
 
 
@@ -207,15 +221,26 @@ def render_adjust(profile: UserProfile, offline: bool, plan) -> None:
         "Lý do", "Deadline gấp ở công việc chính, phải làm thêm buổi tối"
     )
     if st.button("Điều chỉnh kế hoạch", use_container_width=True):
-        with st.spinner("Hội đồng đang xem lại..."):
-            try:
-                new_plan, event = adjust_plan(
+        try:
+            with st.status("Hội đồng đang xem lại...", expanded=True) as status:
+                new_plan = None
+                event = None
+                for node, update in iter_adjust(
                     plan, profile, reason, missed=missed, llm=llm_for(offline)
-                )
+                ):
+                    st.write(NODE_LABELS.get(node, node))
+                    if "plan_out" in update:
+                        new_plan = update["plan_out"]
+                    if "event" in update:
+                        event = update["event"]
+                status.update(label="Đã điều chỉnh xong", state="complete")
+            if new_plan is not None and event is not None:
                 st.session_state.plan = new_plan
                 st.session_state.event = event
-            except Exception as exc:  # noqa: BLE001 - hiển thị lỗi cho người dùng
-                st.error(f"Lỗi khi điều chỉnh: {exc}")
+            else:
+                st.error("Không nhận được kết quả điều chỉnh.")
+        except Exception as exc:  # noqa: BLE001 - hiển thị lỗi cho người dùng
+            st.error(f"Lỗi khi điều chỉnh: {exc}")
 
     event = st.session_state.get("event")
     if event is not None:
@@ -245,13 +270,22 @@ def main() -> None:
         st.success("Mục tiêu đã đủ rõ để lập kế hoạch.")
 
     if st.button("Lập kế hoạch", type="primary", use_container_width=True):
-        with st.spinner("Chiến Lược Gia, Giáo Viên và Huấn Luyện Viên đang làm việc..."):
-            try:
-                st.session_state.plan = create_plan(profile, llm=llm_for(offline))
+        try:
+            with st.status("Hội đồng đang làm việc...", expanded=True) as status:
+                plan_result = None
+                for node, update in iter_plan(profile, llm=llm_for(offline)):
+                    st.write(NODE_LABELS.get(node, node))
+                    if "plan" in update:
+                        plan_result = update["plan"]
+                status.update(label="Đã lập xong kế hoạch", state="complete")
+            if plan_result is not None:
+                st.session_state.plan = plan_result
                 if "event" in st.session_state:
                     del st.session_state["event"]
-            except Exception as exc:  # noqa: BLE001 - hiển thị lỗi cho người dùng
-                st.error(f"Lỗi khi lập kế hoạch: {exc}")
+            else:
+                st.error("Không nhận được kế hoạch từ đồ thị.")
+        except Exception as exc:  # noqa: BLE001 - hiển thị lỗi cho người dùng
+            st.error(f"Lỗi khi lập kế hoạch: {exc}")
 
     plan = st.session_state.get("plan")
     if plan is None:
