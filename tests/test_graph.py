@@ -27,6 +27,33 @@ def test_overload_triggers_exactly_one_replan(fake_llm, profile):
     assert fake_llm.count("Critique") == 2
 
 
+def test_roundtable_both_personas_speak_when_run_in_parallel(fake_llm, profile):
+    """Phản Biện và Động Viên chạy song song nhưng vẫn phải đủ cả hai lượt."""
+    plan = create_plan(profile, llm=fake_llm)
+
+    personas = [turn.persona for turn in plan.roundtable.turns]
+    assert personas == ["Người Phản Biện", "Người Động Viên"]
+    assert all(turn.content for turn in plan.roundtable.turns)
+    # Động Viên dùng đường văn bản tự do
+    assert fake_llm.count("text") >= 1
+
+
+def test_roundtable_survives_critic_failure(profile, fake_llm_cls):
+    """Phản Biện lỗi thì vẫn phải ra kế hoạch, không sập cả luồng."""
+
+    class BrokenCritic(fake_llm_cls):
+        def structured(self, system_prompt, user_prompt, schema):
+            if schema.__name__ == "Critique":
+                raise RuntimeError("dịch vụ phản biện chết")
+            return super().structured(system_prompt, user_prompt, schema)
+
+    plan = create_plan(profile, llm=BrokenCritic())
+
+    assert plan.roundtable is not None
+    assert len(plan.roundtable.turns) == 2
+    assert "Không lấy được phản biện" in plan.roundtable.turns[0].content
+
+
 def test_no_replan_when_not_overloaded(fake_llm_cls, profile):
     llm = fake_llm_cls(overload_times=0)
     create_plan(profile, llm=llm)

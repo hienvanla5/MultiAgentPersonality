@@ -15,12 +15,12 @@ của chính mình. Một agent hết năng lực sẽ tự từ chối và khô
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 from typing import Iterable, Optional
 
 from pydantic import BaseModel, Field
 
 from ..acl import MessageBus, Performative
+from ..parallel import map_parallel
 from .autonomy import AutonomousAgent, Bid, Refusal, Task
 
 MANAGER = "orchestrator"
@@ -194,16 +194,23 @@ class ContractNet:
             ]
 
         # Các agent đánh giá độc lập nên chạy song song được. `assess()` chỉ đọc
-        # và tăng bộ đếm `refused` của chính agent đó, nên không tranh chấp.
-        with ThreadPoolExecutor(max_workers=len(pairs)) as pool:
-            futures = [
-                (agent, announcement, pool.submit(agent.assess, task))
-                for agent, announcement in pairs
-            ]
-            return [
-                (agent, announcement, future.result())
-                for agent, announcement, future in futures
-            ]
+        # trạng thái và tăng bộ đếm `refused` của chính agent đó.
+        outcome = map_parallel(
+            [lambda a=agent: a.assess(task) for agent, _ in pairs],
+            max_workers=len(pairs),
+        )
+        collected: list[tuple[AutonomousAgent, object, Bid | Refusal]] = []
+        for index, (agent, announcement) in enumerate(pairs):
+            value = outcome.values[index]
+            if value is None:
+                # Một agent lỗi không được làm hỏng cả lượt thương lượng.
+                value = Refusal(
+                    agent=agent.key,
+                    task_id=task.id,
+                    reason=f"lỗi khi đánh giá ({outcome.errors[index]})",
+                )
+            collected.append((agent, announcement, value))
+        return collected
 
     def _pick_winner(self, bids: list[Bid]) -> Bid:
         """Chọn thầu tốt nhất; hoà thì ưu tiên chi phí thấp rồi tới tên agent.

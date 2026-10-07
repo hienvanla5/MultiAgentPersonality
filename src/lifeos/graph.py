@@ -25,6 +25,7 @@ from .models import (
     WeeklySchedule,
 )
 from .personas import PERSONAS, build_tone_instruction
+from .parallel import map_parallel
 
 REDUCED_LOAD_FACTOR = 0.8
 ADJUST_LOAD_FACTOR = 0.9
@@ -145,14 +146,32 @@ def build_graph(
                 first_week=state.get("first_week"),
             )
         )
-        crit = critic_agent.critique(llm, summary, state["profile"], state["tone"])
-        nudge = nudger.encourage(
-            llm,
-            "Người dùng vừa nhận kế hoạch mới cho mục tiêu: "
-            + state["goal"].description,
-            state["profile"],
-            state["tone"],
+        # Hai ý kiến này độc lập nhau -> chạy song song để tiết kiệm thời gian.
+        # Mỗi lượt là một lời gọi LLM nên đây là chỗ tốn thời gian nhất.
+        outcomes = map_parallel(
+            [
+                lambda: critic_agent.critique(
+                    llm, summary, state["profile"], state["tone"]
+                ),
+                lambda: nudger.encourage(
+                    llm,
+                    "Người dùng vừa nhận kế hoạch mới cho mục tiêu: "
+                    + state["goal"].description,
+                    state["profile"],
+                    state["tone"],
+                ),
+            ]
         )
+        crit, nudge = outcomes.values[0], outcomes.values[1]
+        if crit is None:
+            # Không có phản biện thì coi như không phát hiện quá tải, nhưng vẫn
+            # ghi lại để không âm thầm bỏ qua lỗi.
+            crit = Critique(
+                summary=f"Không lấy được phản biện ({outcomes.errors[0]})."
+            )
+        if nudge is None:
+            nudge = "Cố lên — bắt đầu nhỏ rồi tăng dần."
+
         turns = [
             _msg(
                 "critic",
