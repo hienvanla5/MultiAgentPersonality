@@ -3,7 +3,15 @@
 from __future__ import annotations
 
 from ..llm import LLM
-from ..models import ScheduleTask, StudyPlan, UserProfile, WeeklySchedule
+from ..models import (
+    ModuleSlice,
+    ScheduleTask,
+    StudyPlan,
+    TaskType,
+    UserProfile,
+    WeekAllocation,
+    WeeklySchedule,
+)
 from ..tools.calendar import WEEKDAY_NAMES, shift_off_busy, to_hhmm, to_minutes
 from .base import structured
 
@@ -110,3 +118,126 @@ Khung giờ năng lượng cao: {_energy_text(profile)}"""
             f"Tuần {week}: {len(tasks)} buổi, tổng {schedule.total_hours} giờ."
         )
     return schedule
+
+
+# --- Lịch nhiều tuần (thuần logic, không gọi LLM) ---
+
+
+def allocate_modules(
+    study_plan: StudyPlan, hours_per_week: int, weeks: int
+) -> list[WeekAllocation]:
+    """Chia module vào từng tuần theo số giờ, giữ nguyên thứ tự học.
+
+    Module dài hơn quỹ thời gian một tuần sẽ bị cắt qua nhiều tuần.
+    """
+    capacity = max(1, int(hours_per_week))
+    queue: list[list] = [
+        [m.title, max(1, int(m.duration_hours)), m.order]
+        for m in sorted(study_plan.modules, key=lambda m: m.order)
+    ]
+
+    allocations: list[WeekAllocation] = []
+    index = 0
+    for week in range(1, max(1, int(weeks)) + 1):
+        remaining = capacity
+        items: list[ModuleSlice] = []
+        while remaining > 0 and index < len(queue):
+            title, hours, order = queue[index]
+            take = min(hours, remaining)
+            items.append(ModuleSlice(module_title=title, hours=take, order=order))
+            hours -= take
+            remaining -= take
+            if hours <= 0:
+                index += 1
+            else:
+                queue[index][1] = hours
+        allocations.append(
+            WeekAllocation(week=week, items=items, total_hours=capacity - remaining)
+        )
+    return allocations
+
+
+def _session_start_min(profile: UserProfile) -> int:
+    if profile.energy_windows:
+        start = to_minutes(profile.energy_windows[0].start)
+        if start >= 0:
+            return start
+    return DEFAULT_START_MIN
+
+
+def week_from_allocation(
+    allocation: WeekAllocation,
+    profile: UserProfile,
+    busy: dict[str, list[tuple[int, int]]] | None = None,
+) -> WeeklySchedule:
+    """Sinh lịch một tuần từ phân bổ module, không gọi LLM.
+
+    Buổi học được rải đều các ngày; nếu một ngày có nhiều buổi thì giờ bắt đầu
+    được đẩy lùi để không chồng lên nhau.
+    """
+    start_min = _session_start_min(profile)
+
+    sessions: list[tuple[str, int]] = []
+    for item in allocation.items:
+        total = item.hours * 60
+        while total > 0:
+            duration = 90 if total >= 90 else total
+            sessions.append((item.module_title, duration))
+            total -= duration
+
+    tasks: list[ScheduleTask] = []
+    for index, (title, duration) in enumerate(sessions):
+        day = WEEKDAY_NAMES[index % len(WEEKDAY_NAMES)]
+        slot = index // len(WEEKDAY_NAMES)  # buổi thứ mấy trong cùng một ngày
+        tasks.append(
+            ScheduleTask(
+                title=f"{title} (buổi {index + 1})",
+                task_type=TaskType.STUDY,
+                day=day,
+                start=to_hhmm(start_min + slot * 120),
+                duration_min=duration,
+                module_ref=title,
+            )
+        )
+
+    tasks = _normalize_tasks(tasks, allocation.week, busy)
+    tasks = _trim_to_budget(tasks, profile.hours_per_week, 1.0)
+    total_hours = round(sum(t.duration_min for t in tasks) / 60)
+    modules = ", ".join(allocation.module_titles) or "không có module"
+    return WeeklySchedule(
+        week=allocation.week,
+        tasks=tasks,
+        total_hours=total_hours,
+        summary=f"Tuần {allocation.week}: {len(tasks)} buổi, {total_hours} giờ — {modules}.",
+    )
+
+
+def build_program(
+    llm: LLM,
+    study_plan: StudyPlan,
+    profile: UserProfile,
+    tone: str,
+    *,
+    weeks: int = 4,
+    busy: dict[str, list[tuple[int, int]]] | None = None,
+    detailed_weeks: int = 1,
+) -> list[WeeklySchedule]:
+    """Sinh lịch nhiều tuần.
+
+    `detailed_weeks` tuần đầu do LLM lập chi tiết; các tuần còn lại sinh thuần
+    logic để tránh gọi LLM hàng chục lần cho một lộ trình 24 tuần.
+    """
+    weeks = max(1, int(weeks))
+    allocations = allocate_modules(study_plan, profile.hours_per_week, weeks)
+
+    program: list[WeeklySchedule] = []
+    for allocation in allocations:
+        if allocation.week <= max(0, int(detailed_weeks)):
+            program.append(
+                build_week(
+                    llm, study_plan, profile, tone, week=allocation.week, busy=busy
+                )
+            )
+        else:
+            program.append(week_from_allocation(allocation, profile, busy))
+    return program

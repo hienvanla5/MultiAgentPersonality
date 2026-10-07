@@ -28,6 +28,8 @@ from .personas import PERSONAS, build_tone_instruction
 
 REDUCED_LOAD_FACTOR = 0.8
 ADJUST_LOAD_FACTOR = 0.9
+# Chặn trên số tuần sinh ra, tránh lịch quá dài trong một lần lập kế hoạch.
+PROGRAM_MAX_WEEKS = 26
 
 
 class BuildState(TypedDict, total=False):
@@ -42,6 +44,7 @@ class BuildState(TypedDict, total=False):
     gaps: list[SkillGap]
     study_plan: StudyPlan
     first_week: WeeklySchedule
+    weeks: list[WeeklySchedule]
     critique: Critique
     nudge: str
     roundtable: Roundtable
@@ -105,6 +108,30 @@ def build_graph(
     def reduce_load_node(state: BuildState) -> dict:
         return {"load_factor": REDUCED_LOAD_FACTOR, "replanned": True}
 
+    def program_node(state: BuildState) -> dict:
+        """Mở rộng tuần 1 thành lịch nhiều tuần (các tuần sau sinh thuần logic)."""
+        study_plan = state["study_plan"]
+        profile = state["profile"]
+        total = max(1, int(study_plan.total_weeks or 1))
+        total = min(total, PROGRAM_MAX_WEEKS)
+
+        allocations = scheduler.allocate_modules(
+            study_plan, profile.hours_per_week, total
+        )
+        first = state.get("first_week")
+
+        weeks: list[WeeklySchedule] = []
+        for allocation in allocations:
+            if allocation.week == 1 and first is not None:
+                weeks.append(first)
+            else:
+                weeks.append(
+                    scheduler.week_from_allocation(
+                        allocation, profile, state.get("busy")
+                    )
+                )
+        return {"weeks": weeks}
+
     def roundtable_node(state: BuildState) -> dict:
         summary = render_plan_summary(
             LifeOSPlan(
@@ -154,6 +181,7 @@ def build_graph(
             gaps=state.get("gaps", []),
             study_plan=state.get("study_plan"),
             first_week=state.get("first_week"),
+            weeks=state.get("weeks", []),
             roundtable=rt,
         )
         return {"roundtable": rt, "plan": plan}
@@ -172,6 +200,7 @@ def build_graph(
     graph.add_node("career", career_node)
     graph.add_node("curriculum", curriculum_node)
     graph.add_node("schedule", schedule_node)
+    graph.add_node("program", program_node)
     graph.add_node("reduce_load", reduce_load_node)
     graph.add_node("roundtable", roundtable_node)
     graph.add_node("synthesize", synthesize_node)
@@ -180,7 +209,8 @@ def build_graph(
     graph.add_edge(START, "career")
     graph.add_edge("career", "curriculum")
     graph.add_edge("curriculum", "schedule")
-    graph.add_edge("schedule", "roundtable")
+    graph.add_edge("schedule", "program")
+    graph.add_edge("program", "roundtable")
     graph.add_conditional_edges(
         "roundtable",
         route_after_roundtable,
@@ -293,6 +323,7 @@ NODE_LABELS: dict[str, str] = {
     "career": "🎯 Chiến Lược Gia đang phân tích khoảng trống kỹ năng...",
     "curriculum": "📚 Giáo Viên đang thiết kế lộ trình học...",
     "schedule": "⏰ Huấn Luyện Viên đang xếp lịch tuần...",
+    "program": "🗓️ Đang mở rộng thành lịch nhiều tuần...",
     "reduce_load": "⚠️ Phát hiện quá tải — đang giảm tải...",
     "roundtable": "🔍💪 Hội đồng đang tranh luận...",
     "synthesize": "🧭 Người Dẫn Đường đang tổng hợp...",

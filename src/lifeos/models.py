@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 from typing import Optional
 
@@ -120,6 +120,84 @@ class AgentMessage(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.now)
 
 
+class ModuleSlice(BaseModel):
+    """Một phần số giờ của module được phân bổ vào một tuần."""
+
+    module_title: str
+    hours: int = 1
+    order: int = 0
+
+
+class WeekAllocation(BaseModel):
+    """Phân bổ module cho một tuần — thuần logic, không gọi LLM."""
+
+    week: int = 1
+    items: list[ModuleSlice] = Field(default_factory=list)
+    total_hours: int = 0
+
+    @property
+    def module_titles(self) -> list[str]:
+        titles: list[str] = []
+        for item in self.items:
+            if item.module_title not in titles:
+                titles.append(item.module_title)
+        return titles
+
+
+class ReviewCard(BaseModel):
+    """Thẻ ôn tập cách quãng (SRS)."""
+
+    topic: str
+    module_ref: Optional[str] = None
+    ease: float = 2.5
+    interval_days: int = 1
+    repetitions: int = 0
+    due_date: date = Field(default_factory=date.today)
+    last_reviewed: Optional[date] = None
+    lapses: int = 0
+
+
+class WeekProgress(BaseModel):
+    """Tiến độ của một tuần."""
+
+    week: int = 1
+    total: int = 0
+    done: int = 0
+    missed: int = 0
+    planned: int = 0
+    hours_done: int = 0
+    hours_planned: int = 0
+
+    @property
+    def pct(self) -> int:
+        return round(100 * self.done / self.total) if self.total else 0
+
+
+class ProgramProgress(BaseModel):
+    """Tiến độ toàn chương trình."""
+
+    weeks: list[WeekProgress] = Field(default_factory=list)
+    overall_pct: int = 0
+    hours_done: int = 0
+    hours_planned: int = 0
+    current_week: int = 1
+    on_track: bool = True
+    note: str = ""
+
+
+class QuizResult(BaseModel):
+    """Kết quả một lượt kiểm tra hiểu biết."""
+
+    total: int = 0
+    correct: int = 0
+    weak_topics: list[str] = Field(default_factory=list)
+    detail: list[str] = Field(default_factory=list)
+
+    @property
+    def score_pct(self) -> int:
+        return round(100 * self.correct / self.total) if self.total else 0
+
+
 class Roundtable(BaseModel):
     topic: str = ""
     turns: list[AgentMessage] = Field(default_factory=list)
@@ -141,4 +219,5 @@ class LifeOSPlan(BaseModel):
     gaps: list[SkillGap] = Field(default_factory=list)
     study_plan: Optional[StudyPlan] = None
     first_week: Optional[WeeklySchedule] = None
+    weeks: list[WeeklySchedule] = Field(default_factory=list)
     roundtable: Optional[Roundtable] = None

@@ -99,3 +99,14 @@ def test_tutor_quiz_and_explain(fake_llm):
     assert len(quiz.options) >= 2
     assert 0 <= quiz.answer_index < len(quiz.options)
     assert tutor.explain(fake_llm, "SQL JOIN", "tone")
+
+
+def test_plan_contains_multi_week_program(fake_llm, profile):
+    plan = create_plan(profile, llm=fake_llm)
+
+    assert plan.weeks, "kế hoạch phải có lịch nhiều tuần"
+    assert [w.week for w in plan.weeks] == list(range(1, len(plan.weeks) + 1))
+    assert plan.first_week is not None
+    assert plan.weeks[0].week == plan.first_week.week
+    assert all(w.total_hours <= profile.hours_per_week for w in plan.weeks)
+    assert all(t.id for w in plan.weeks for t in w.tasks)
