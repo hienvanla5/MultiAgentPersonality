@@ -1,11 +1,16 @@
-"""Công cụ lịch: đọc ICS và xử lý xung đột theo khung giờ trong tuần."""
+"""Công cụ lịch: đọc/ghi ICS, xử lý xung đột theo khung giờ trong tuần."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
+from pathlib import Path
+from typing import Optional
+from uuid import uuid4
 
-from icalendar import Calendar
+from icalendar import Calendar, Event
+
+from ..models import TaskStatus, WeeklySchedule
 
 WEEKDAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
@@ -111,3 +116,89 @@ def shift_off_busy(
         if guard > 96:  # 96 * 30 phút = 48 giờ, thoát an toàn
             break
     return start_min
+
+
+# --- Xuất lịch ra định dạng ICS ---
+
+
+def week_monday(week: int, start_date: Optional[date] = None) -> date:
+    """Ngày thứ Hai của tuần thứ `week` (tuần 1 bắt đầu từ `start_date`)."""
+    base = start_date or date.today()
+    base_monday = base - timedelta(days=base.weekday())
+    return base_monday + timedelta(weeks=max(0, week - 1))
+
+
+def task_datetimes(
+    task, week: int, start_date: Optional[date] = None
+) -> tuple[datetime, datetime]:
+    """Thời điểm bắt đầu/kết thúc thực tế của một buổi học."""
+    day_index = WEEKDAY_NAMES.index(task.day) if task.day in WEEKDAY_NAMES else 0
+    day = week_monday(week, start_date) + timedelta(days=day_index)
+
+    start_min = to_minutes(task.start)
+    if start_min < 0:
+        start_min = 20 * 60
+
+    start = datetime.combine(day, time(hour=start_min // 60, minute=start_min % 60))
+    return start, start + timedelta(minutes=max(15, task.duration_min))
+
+
+def tasks_to_ics(
+    weeks: list[WeeklySchedule],
+    *,
+    start_date: Optional[date] = None,
+    calendar_name: str = "Life OS",
+) -> str:
+    """Chuyển lịch nhiều tuần thành chuỗi ICS để import vào Google Calendar.
+
+    Buổi đã hoàn thành được đánh dấu `STATUS:CONFIRMED`, buổi bị trượt là
+    `STATUS:CANCELLED` để nhìn rõ trên lịch.
+    """
+    cal = Calendar()
+    cal.add("prodid", "-//Life OS//Multi-Agent Personality//VI")
+    cal.add("version", "2.0")
+    cal.add("x-wr-calname", calendar_name)
+
+    for week in weeks:
+        for task in week.tasks:
+            start, end = task_datetimes(task, week.week, start_date)
+            event = Event()
+            event.add("summary", task.title)
+            event.add("dtstart", start)
+            event.add("dtend", end)
+            event.add("dtstamp", datetime.now())
+            event.add("uid", f"{task.id or uuid4().hex}@lifeos")
+            event.add(
+                "status",
+                "CANCELLED" if task.status == TaskStatus.MISSED else "CONFIRMED",
+            )
+            description = [f"Tuần {week.week}", f"Loại: {task.task_type.value}"]
+            if task.module_ref:
+                description.append(f"Module: {task.module_ref}")
+            if task.notes:
+                description.append(task.notes)
+            event.add("description", "\n".join(description))
+            cal.add_component(event)
+
+    return cal.to_ical().decode("utf-8")
+
+
+def write_ics(
+    weeks: list[WeeklySchedule],
+    path: str | Path,
+    *,
+    start_date: Optional[date] = None,
+    calendar_name: str = "Life OS",
+) -> Path:
+    """Ghi lịch ra file .ics và trả về đường dẫn.
+
+    Ghi ở chế độ nhị phân vì `to_ical()` đã trả về đúng chuẩn CRLF của RFC 5545;
+    ghi dạng text trên Windows sẽ đổi `\\n` thành `\\r\\n` và làm hỏng file.
+    """
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    content = tasks_to_ics(
+        weeks, start_date=start_date, calendar_name=calendar_name
+    )
+    target.write_bytes(content.encode("utf-8"))
+    return target
