@@ -124,13 +124,18 @@ Khung giờ năng lượng cao: {_energy_text(profile)}"""
 
 
 def allocate_modules(
-    study_plan: StudyPlan, hours_per_week: int, weeks: int
+    study_plan: StudyPlan,
+    hours_per_week: int,
+    weeks: int,
+    load_factor: float = 1.0,
 ) -> list[WeekAllocation]:
     """Chia module vào từng tuần theo số giờ, giữ nguyên thứ tự học.
 
     Module dài hơn quỹ thời gian một tuần sẽ bị cắt qua nhiều tuần.
+    `load_factor` cho phép giảm tải toàn chương trình (khi hội đồng kết luận
+    kế hoạch quá tải) thay vì chỉ giảm ở tuần đầu.
     """
-    capacity = max(1, int(hours_per_week))
+    capacity = max(1, int(hours_per_week * load_factor))
     queue: list[list] = [
         [m.title, max(1, int(m.duration_hours)), m.order]
         for m in sorted(study_plan.modules, key=lambda m: m.order)
@@ -169,6 +174,7 @@ def week_from_allocation(
     allocation: WeekAllocation,
     profile: UserProfile,
     busy: dict[str, list[tuple[int, int]]] | None = None,
+    load_factor: float = 1.0,
 ) -> WeeklySchedule:
     """Sinh lịch một tuần từ phân bổ module, không gọi LLM.
 
@@ -201,7 +207,7 @@ def week_from_allocation(
         )
 
     tasks = _normalize_tasks(tasks, allocation.week, busy)
-    tasks = _trim_to_budget(tasks, profile.hours_per_week, 1.0)
+    tasks = _trim_to_budget(tasks, profile.hours_per_week, load_factor)
     total_hours = round(sum(t.duration_min for t in tasks) / 60)
     modules = ", ".join(allocation.module_titles) or "không có module"
     return WeeklySchedule(
@@ -221,6 +227,7 @@ def build_program(
     weeks: int = 4,
     busy: dict[str, list[tuple[int, int]]] | None = None,
     detailed_weeks: int = 1,
+    load_factor: float = 1.0,
 ) -> list[WeeklySchedule]:
     """Sinh lịch nhiều tuần.
 
@@ -228,16 +235,26 @@ def build_program(
     logic để tránh gọi LLM hàng chục lần cho một lộ trình 24 tuần.
     """
     weeks = max(1, int(weeks))
-    allocations = allocate_modules(study_plan, profile.hours_per_week, weeks)
+    allocations = allocate_modules(
+        study_plan, profile.hours_per_week, weeks, load_factor
+    )
 
     program: list[WeeklySchedule] = []
     for allocation in allocations:
         if allocation.week <= max(0, int(detailed_weeks)):
             program.append(
                 build_week(
-                    llm, study_plan, profile, tone, week=allocation.week, busy=busy
+                    llm,
+                    study_plan,
+                    profile,
+                    tone,
+                    week=allocation.week,
+                    busy=busy,
+                    load_factor=load_factor,
                 )
             )
         else:
-            program.append(week_from_allocation(allocation, profile, busy))
+            program.append(
+                week_from_allocation(allocation, profile, busy, load_factor)
+            )
     return program

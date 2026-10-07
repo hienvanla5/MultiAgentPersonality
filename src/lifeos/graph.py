@@ -45,6 +45,7 @@ class BuildState(TypedDict, total=False):
     study_plan: StudyPlan
     first_week: WeeklySchedule
     weeks: list[WeeklySchedule]
+    program_weeks: int
     critique: Critique
     nudge: str
     roundtable: Roundtable
@@ -113,10 +114,13 @@ def build_graph(
         study_plan = state["study_plan"]
         profile = state["profile"]
         total = max(1, int(study_plan.total_weeks or 1))
-        total = min(total, PROGRAM_MAX_WEEKS)
+        total = min(total, int(state.get("program_weeks") or PROGRAM_MAX_WEEKS))
+        # Nếu hội đồng đã kết luận quá tải thì giảm tải cho CẢ chương trình,
+        # không chỉ tuần đầu — nếu không, tuần 2 trở đi lại đầy 100% ngân sách.
+        load_factor = float(state.get("load_factor", 1.0))
 
         allocations = scheduler.allocate_modules(
-            study_plan, profile.hours_per_week, total
+            study_plan, profile.hours_per_week, total, load_factor
         )
         first = state.get("first_week")
 
@@ -127,7 +131,7 @@ def build_graph(
             else:
                 weeks.append(
                     scheduler.week_from_allocation(
-                        allocation, profile, state.get("busy")
+                        allocation, profile, state.get("busy"), load_factor
                     )
                 )
         return {"weeks": weeks}
@@ -342,10 +346,12 @@ def iter_plan(
     memory: Optional[VectorMemory] = None,
     goal: Optional[Goal] = None,
     busy: Optional[dict] = None,
+    program_weeks: int = PROGRAM_MAX_WEEKS,
 ) -> Iterator[tuple[str, dict]]:
     """Chạy đồ thị lập kế hoạch, yield (tên_node, cập_nhật) sau mỗi bước.
 
     Dùng để hiển thị tiến độ: model suy luận có thể mất vài phút cho cả luồng.
+    `program_weeks` giới hạn số tuần sinh ra trong lịch nhiều tuần.
     """
     llm = llm or get_llm()
     goal = goal or Goal(description=profile.goal_summary or "Mục tiêu cá nhân")
@@ -358,6 +364,7 @@ def iter_plan(
         "busy": busy or {},
         "load_factor": 1.0,
         "replanned": False,
+        "program_weeks": max(1, int(program_weeks)),
     }
     for event in app.stream(state):
         for node_name, update in event.items():
@@ -372,11 +379,18 @@ def create_plan(
     memory: Optional[VectorMemory] = None,
     goal: Optional[Goal] = None,
     busy: Optional[dict] = None,
+    program_weeks: int = PROGRAM_MAX_WEEKS,
 ) -> LifeOSPlan:
     """Lập kế hoạch đầy đủ cho một hồ sơ người dùng."""
     plan: Optional[LifeOSPlan] = None
     for _node, update in iter_plan(
-        profile, llm=llm, store=store, memory=memory, goal=goal, busy=busy
+        profile,
+        llm=llm,
+        store=store,
+        memory=memory,
+        goal=goal,
+        busy=busy,
+        program_weeks=program_weeks,
     ):
         if "plan" in update:
             plan = update["plan"]

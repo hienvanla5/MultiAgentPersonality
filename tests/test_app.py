@@ -59,3 +59,44 @@ def test_app_adjust_flow_moves_to_next_week():
     success_text = " ".join(item.value for item in app.success)
     assert "Đã điều chỉnh" in success_text
     assert "tuần 1 → tuần 2" in success_text
+
+
+def test_app_renders_new_sections():
+    app = _run_offline_app()
+    app.button[0].click().run()
+    assert not app.exception
+
+    subheaders = " | ".join(item.value for item in app.subheader)
+    assert "Lịch nhiều tuần" in subheaders
+    assert "Tiến độ" in subheaders
+    assert "Ôn tập cách quãng" in subheaders
+    assert "Kiểm tra hiểu biết" in subheaders
+
+
+def test_app_offers_ics_download():
+    app = _run_offline_app()
+    app.button[0].click().run()
+    assert not app.exception
+
+    downloads = [d for d in app.get("download_button")]
+    assert downloads, "phải có nút tải lịch .ics"
+    assert downloads[0].label.startswith("⬇️ Tải lịch .ics")
+
+
+def test_app_marking_progress_updates_report():
+    app = _run_offline_app()
+    app.button[0].click().run()
+    assert not app.exception
+
+    # Tick buổi đầu tiên của tuần 1 rồi lưu
+    app.checkbox[0].set_value(True)
+    save_buttons = [b for b in app.button if "Lưu tiến độ" in b.label]
+    assert save_buttons
+    save_buttons[0].click().run()
+
+    assert not app.exception
+    success_text = " ".join(item.value for item in app.success)
+    assert "Đã ghi nhận" in success_text
+
+    metrics = {m.label: m.value for m in app.metric}
+    assert metrics.get("Hoàn thành") not in (None, "0%")

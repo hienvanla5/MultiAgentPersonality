@@ -151,3 +151,32 @@ def test_build_program_every_week_within_budget(fake_llm, profile):
         fake_llm, _plan(("SQL", 40), ("Python", 30)), profile, "tone", weeks=8
     )
     assert all(w.total_hours <= profile.hours_per_week for w in program)
+
+
+# --- load_factor lan ra toàn chương trình ---
+
+
+def test_allocation_applies_load_factor():
+    full = scheduler.allocate_modules(_plan(("SQL", 80)), 10, 4, 1.0)
+    reduced = scheduler.allocate_modules(_plan(("SQL", 80)), 10, 4, 0.8)
+    assert [a.total_hours for a in full] == [10, 10, 10, 10]
+    assert [a.total_hours for a in reduced] == [8, 8, 8, 8]
+
+
+def test_allocation_load_factor_never_drops_below_one_hour():
+    allocs = scheduler.allocate_modules(_plan(("SQL", 80)), 1, 3, 0.5)
+    assert all(a.total_hours >= 1 for a in allocs)
+
+
+def test_week_from_allocation_respects_load_factor(profile):
+    week = scheduler.week_from_allocation(
+        _allocation(2, ("SQL", 10)), profile, load_factor=0.8
+    )
+    assert week.total_hours <= 8
+
+
+def test_build_program_applies_load_factor_to_all_weeks(fake_llm, profile):
+    program = scheduler.build_program(
+        fake_llm, _plan(("SQL", 80)), profile, "tone", weeks=5, load_factor=0.8
+    )
+    assert all(w.total_hours <= 8 for w in program)

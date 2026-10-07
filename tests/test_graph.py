@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from lifeos.graph import adjust_plan, create_plan
+from lifeos.graph import REDUCED_LOAD_FACTOR, adjust_plan, create_plan
 from lifeos.memory import Store, VectorMemory
 
 
@@ -110,3 +110,22 @@ def test_plan_contains_multi_week_program(fake_llm, profile):
     assert plan.weeks[0].week == plan.first_week.week
     assert all(w.total_hours <= profile.hours_per_week for w in plan.weeks)
     assert all(t.id for w in plan.weeks for t in w.tasks)
+
+
+def test_reduced_load_propagates_to_whole_program(fake_llm, profile):
+    """Hội đồng kết luận quá tải thì giảm tải phải áp cho mọi tuần, không chỉ tuần 1."""
+    fake_llm.overload_times = 1
+    plan = create_plan(profile, llm=fake_llm)
+
+    reduced_budget = int(profile.hours_per_week * REDUCED_LOAD_FACTOR)
+    assert len(plan.weeks) > 1
+    for week in plan.weeks[1:]:
+        assert week.total_hours <= reduced_budget, (
+            f"tuần {week.week} vẫn {week.total_hours}h, vượt mức giảm tải "
+            f"{reduced_budget}h"
+        )
+
+
+def test_program_weeks_limit_is_respected(fake_llm, profile):
+    plan = create_plan(profile, llm=fake_llm, program_weeks=3)
+    assert len(plan.weeks) == 3

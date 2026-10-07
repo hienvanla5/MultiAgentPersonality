@@ -6,7 +6,10 @@ Mặc định dùng LLM giả (offline). Thêm --real để gọi API thật (c�
 from __future__ import annotations
 
 import argparse
+from datetime import date
 
+from lifeos import persistence, progress, srs
+from lifeos.agents import tutor
 from lifeos.clarify import clarifying_questions
 from lifeos.demo import DemoLLM
 from lifeos.graph import NODE_LABELS, iter_adjust, iter_plan
@@ -15,8 +18,10 @@ from lifeos.models import (
     CommunicationStyle,
     EnergyWindow,
     StrictnessLevel,
+    TaskStatus,
     UserProfile,
 )
+from lifeos.tools.calendar import write_ics
 
 TASK_TYPE_LABEL = {
     "study": "Học",
@@ -90,6 +95,85 @@ def print_plan(plan, event=None) -> None:
         print(f"  Tuần {event.old_week} -> tuần {event.new_week}")
         print(f"  {event.message}")
 
+    if plan.weeks:
+        print(f"\n[6] LỊCH NHIỀU TUẦN — {len(plan.weeks)} tuần")
+        for week in plan.weeks:
+            modules = ", ".join(
+                dict.fromkeys(t.module_ref for t in week.tasks if t.module_ref)
+            )
+            print(
+                f"  Tuần {week.week:>2}: {len(week.tasks)} buổi, "
+                f"{week.total_hours}h — {modules or 'ôn tập'}"
+            )
+
+
+def print_progress(plan) -> None:
+    """In báo cáo tiến độ (mô phỏng đã hoàn thành tuần 1)."""
+    print("\n[7] TIẾN ĐỘ")
+    marked = progress.mark_week(plan, 1, TaskStatus.DONE)
+    print(f"  (mô phỏng: đánh dấu xong {marked} buổi của tuần 1)")
+
+    prog = progress.program_progress(plan)
+    print(f"  Hoàn thành: {prog.overall_pct}% ({prog.hours_done}/{prog.hours_planned} giờ)")
+    print(f"  Tuần hiện tại: {prog.current_week} | chuỗi tuần xong: {prog.streak}")
+    print(f"  Trạng thái: {'đúng tiến độ' if prog.on_track else 'chệch tiến độ'}")
+    print(f"  {prog.note}")
+
+    upcoming = progress.next_tasks(plan, limit=3)
+    if upcoming:
+        print("  Buổi sắp tới:")
+        for task in upcoming:
+            print(f"    - {task.day} {task.start} | {task.title}")
+
+
+def print_review(plan) -> None:
+    """In vòng ôn tập cách quãng."""
+    print("\n[8] ÔN TẬP CÁCH QUÃNG (SRS)")
+    today = date.today()
+    cards = srs.cards_from_plan(plan, today=today)
+    if not cards:
+        print("  Chưa có thẻ ôn tập (lộ trình chưa có module).")
+        return
+    print(f"  {srs.summarize(cards, today=today)}")
+    # Mô phỏng một lượt ôn để thấy khoảng cách giãn ra
+    card = cards[0]
+    print(f"  Ví dụ thẻ '{card.topic}':")
+    for quality, label in [(5, "nhớ tốt"), (5, "nhớ tốt"), (1, "quên")]:
+        srs.review(card, quality, today=today)
+        print(
+            f"    trả lời {label:<8} -> lặp {card.repetitions}, "
+            f"hẹn lại sau {card.interval_days} ngày, ease {card.ease:.2f}"
+        )
+
+
+def print_quiz(llm, plan) -> None:
+    """In bài kiểm tra nhiều câu kèm kết quả chấm."""
+    print("\n[9] KIỂM TRA HIỂU BIẾT")
+    topic = "SQL JOIN"
+    if plan.study_plan and plan.study_plan.modules:
+        topic = plan.study_plan.modules[0].title
+
+    questions = tutor.quiz_set(llm, topic, "tone", count=3)
+    print(f"  Chủ đề: {topic} — {len(questions)} câu")
+    for index, question in enumerate(questions, start=1):
+        print(f"\n  Câu {index}: {question.question}")
+        for option_index, option in enumerate(question.options):
+            print(f"    {option_index}. {option}")
+
+    # Mô phỏng: đúng câu đầu, sai các câu còn lại
+    answers = [
+        q.answer_index if i == 0 else (q.answer_index + 1) % max(1, len(q.options))
+        for i, q in enumerate(questions)
+    ]
+    result = tutor.grade(answers, questions)
+    print(f"\n  Kết quả: {result.correct}/{result.total} ({result.score_pct}%)")
+    for line in result.detail:
+        print(f"    {line}")
+    if result.weak_topics:
+        print("  Cần ôn lại:")
+        for weak in tutor.follow_up_topics(result):
+            print(f"    - {weak}")
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Demo Life OS")
@@ -99,7 +183,37 @@ def main() -> None:
     parser.add_argument(
         "--skip-adjust", action="store_true", help="Không chạy phần điều chỉnh"
     )
+    parser.add_argument(
+        "--weeks", type=int, default=12, help="Số tuần sinh ra trong lịch (mặc định 12)"
+    )
+    parser.add_argument(
+        "--ics", metavar="PATH", help="Xuất lịch ra file .ics để import vào calendar"
+    )
+    parser.add_argument(
+        "--progress", action="store_true", help="In báo cáo tiến độ (mô phỏng)"
+    )
+    parser.add_argument(
+        "--quiz", action="store_true", help="Chạy thử phần kiểm tra hiểu biết"
+    )
+    parser.add_argument(
+        "--save", action="store_true", help="Lưu kế hoạch vào SQLite và in id"
+    )
+    parser.add_argument(
+        "--list-plans", action="store_true", help="Liệt kê kế hoạch đã lưu rồi thoát"
+    )
     args = parser.parse_args()
+
+    if args.list_plans:
+        summaries = persistence.list_plans(persistence.default_store())
+        if not summaries:
+            print("Chưa có kế hoạch nào được lưu.")
+        for summary in summaries:
+            print(
+                f"  #{summary.id} | {summary.created_at} | "
+                f"{summary.weeks} tuần | {summary.progress_pct}% | "
+                f"{summary.goal_summary}"
+            )
+        return
 
     profile = default_profile()
 
@@ -120,13 +234,27 @@ def main() -> None:
 
     plan = None
     print("\n--- Tiến độ lập kế hoạch ---")
-    for node, update in iter_plan(profile, llm=llm):
+    for node, update in iter_plan(profile, llm=llm, program_weeks=args.weeks):
         print(f"  {NODE_LABELS.get(node, node)}")
         if "plan" in update:
             plan = update["plan"]
     if plan is None:
         raise SystemExit("Đồ thị không trả về kế hoạch.")
     print_plan(plan)
+
+    if args.progress:
+        print_progress(plan)
+
+    if args.quiz:
+        print_quiz(llm, plan)
+
+    if args.ics:
+        target = write_ics(plan.weeks, args.ics, calendar_name="Life OS")
+        print(f"\n[ICS] Đã ghi {len(plan.weeks)} tuần ra {target}")
+
+    if args.save:
+        plan_id = persistence.save_plan(persistence.default_store(), plan)
+        print(f"\n[LƯU] Kế hoạch id #{plan_id} (xem lại bằng --list-plans)")
 
     if not args.skip_adjust:
         print("\n--- Tiến độ điều chỉnh ---")

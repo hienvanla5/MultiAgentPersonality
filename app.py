@@ -5,8 +5,12 @@ Chạy: uv run streamlit run app.py
 
 from __future__ import annotations
 
+from datetime import date
+
 import streamlit as st
 
+from lifeos import progress, srs
+from lifeos.agents import tutor
 from lifeos.clarify import clarifying_questions
 from lifeos.config import get_settings
 from lifeos.demo import DemoLLM
@@ -16,8 +20,11 @@ from lifeos.models import (
     CommunicationStyle,
     EnergyWindow,
     StrictnessLevel,
+    TaskStatus,
     UserProfile,
 )
+from lifeos.personas import build_tone_instruction
+from lifeos.tools.calendar import tasks_to_ics
 
 st.set_page_config(page_title="Life OS", page_icon="🧭", layout="wide")
 
@@ -57,7 +64,7 @@ PERSONA_AVATAR = {
 }
 
 
-def render_sidebar() -> tuple[UserProfile, bool]:
+def render_sidebar() -> tuple[UserProfile, bool, int]:
     st.sidebar.title("🧭 Life OS")
     st.sidebar.caption(
         "Hồ sơ dùng để cá nhân hoá kế hoạch **và** giọng điệu của mọi agent."
@@ -69,6 +76,13 @@ def render_sidebar() -> tuple[UserProfile, bool]:
         "Kỹ năng hiện có (cách nhau bằng dấu phẩy)", "Excel, SQL cơ bản"
     )
     hours = st.sidebar.slider("Giờ mỗi tuần", 1, 40, 10)
+    weeks = st.sidebar.slider(
+        "Số tuần lập lịch chi tiết",
+        1,
+        26,
+        12,
+        help="Các tuần sau được sinh tự động từ lộ trình, không tốn thêm lời gọi LLM.",
+    )
 
     col_a, col_b = st.sidebar.columns(2)
     energy_start = col_a.text_input("Năng lượng từ", "20:00")
@@ -115,7 +129,7 @@ def render_sidebar() -> tuple[UserProfile, bool]:
             "Model suy luận có thể mất 30-60s mỗi bước — cả luồng vài phút. "
             "Nếu quá chậm, đổi `LLM_MODEL` sang `deepseek-v4.1-flash`."
         )
-    return profile, offline
+    return profile, offline, weeks
 
 
 def llm_for(offline: bool):
@@ -210,10 +224,224 @@ def render_roundtable(plan) -> None:
             st.write(plan.roundtable.synthesis.content)
 
 
+def render_program(plan) -> None:
+    st.divider()
+    st.subheader("6. Lịch nhiều tuần — cả chương trình 🗓️")
+    if not plan.weeks:
+        st.info("Kế hoạch này chưa có lịch nhiều tuần.")
+        return
+
+    st.dataframe(
+        [
+            {
+                "Tuần": week.week,
+                "Số buổi": len(week.tasks),
+                "Giờ": week.total_hours,
+                "Module": ", ".join(
+                    dict.fromkeys(
+                        task.module_ref for task in week.tasks if task.module_ref
+                    )
+                )
+                or "ôn tập",
+            }
+            for week in plan.weeks
+        ],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    with st.expander("Xem chi tiết từng tuần"):
+        for week in plan.weeks:
+            st.markdown(f"**Tuần {week.week}** — {week.summary}")
+            st.dataframe(
+                [
+                    {
+                        "Ngày": task.day,
+                        "Bắt đầu": task.start,
+                        "Phút": task.duration_min,
+                        "Việc": task.title,
+                        "Trạng thái": task.status.value,
+                    }
+                    for task in week.tasks
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
+
+    st.download_button(
+        "⬇️ Tải lịch .ics (import vào Google Calendar / Outlook)",
+        data=tasks_to_ics(plan.weeks, calendar_name="Life OS").encode("utf-8"),
+        file_name="lifeos-lich.ics",
+        mime="text/calendar",
+        use_container_width=True,
+    )
+
+
+def render_progress(plan) -> None:
+    st.divider()
+    st.subheader("7. Tiến độ 📈")
+    if not plan.weeks:
+        st.info("Cần lịch nhiều tuần để theo dõi tiến độ.")
+        return
+
+    numbers = [week.week for week in plan.weeks]
+    selected = st.selectbox("Tuần muốn cập nhật", numbers, index=0)
+    week = next(w for w in plan.weeks if w.week == selected)
+
+    done_ids: list[str] = []
+    for task in week.tasks:
+        label = (
+            f"{task.day} {task.start} · {task.title} ({task.duration_min} phút)"
+        )
+        if st.checkbox(
+            label, value=task.status == TaskStatus.DONE, key=f"done-{task.id}"
+        ):
+            done_ids.append(task.id)
+
+    if st.button("Lưu tiến độ tuần này", use_container_width=True):
+        for task in week.tasks:
+            status = (
+                TaskStatus.DONE if task.id in done_ids else TaskStatus.PLANNED
+            )
+            progress.mark_task(plan, task.id, status)
+        st.session_state.plan = plan
+        st.success(
+            f"Đã ghi nhận {len(done_ids)}/{len(week.tasks)} buổi của tuần {selected}."
+        )
+
+    summary = progress.program_progress(plan)
+    columns = st.columns(4)
+    columns[0].metric("Hoàn thành", f"{summary.overall_pct}%")
+    columns[1].metric("Giờ đã học", f"{summary.hours_done}/{summary.hours_planned}")
+    columns[2].metric("Tuần hiện tại", summary.current_week)
+    columns[3].metric("Chuỗi tuần xong", summary.streak)
+
+    if summary.on_track:
+        st.success(summary.note)
+    else:
+        st.warning(summary.note)
+
+    upcoming = progress.next_tasks(plan, limit=3)
+    if upcoming:
+        st.caption(
+            "Sắp tới: "
+            + " · ".join(f"{t.day} {t.start} {t.title}" for t in upcoming)
+        )
+
+
+def render_review(plan) -> None:
+    st.divider()
+    st.subheader("8. Ôn tập cách quãng — chống quên 🔁")
+    today = date.today()
+    cards = srs.cards_from_plan(plan, today=today)
+    if not cards:
+        st.info("Lộ trình chưa có module nên chưa tạo được thẻ ôn tập.")
+        return
+
+    st.write(srs.summarize(cards, today=today))
+    st.dataframe(
+        [
+            {
+                "Chủ đề": card.topic,
+                "Đến hạn": card.due_date.isoformat(),
+                "Lần lặp": card.repetitions,
+                "Khoảng cách (ngày)": card.interval_days,
+                "Ease": round(card.ease, 2),
+                "Số lần quên": card.lapses,
+            }
+            for card in cards
+        ],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    due = srs.due_cards(cards, today=today)
+    if not due:
+        st.caption("Hôm nay không có thẻ nào đến hạn.")
+        return
+
+    st.markdown(f"**Thẻ đến hạn: {due[0].topic}**")
+    quality = st.slider(
+        "Bạn nhớ được bao nhiêu? (0 = quên hẳn, 5 = nhớ hoàn hảo)", 0, 5, 4
+    )
+    if st.button("Ghi nhận lượt ôn", use_container_width=True):
+        card = srs.review(due[0], quality, today=today)
+        st.session_state.plan = plan
+        st.success(
+            f"Lần ôn tới sau {card.interval_days} ngày "
+            f"({card.due_date.isoformat()}), hệ số dễ {card.ease:.2f}."
+        )
+
+
+def render_quiz(plan, profile: UserProfile, offline: bool) -> None:
+    st.divider()
+    st.subheader("9. Kiểm tra hiểu biết 🎓")
+    modules = plan.study_plan.modules if plan.study_plan else []
+    topics = [module.title for module in modules] or ["Kiến thức chung"]
+    topic = st.selectbox("Chủ đề", topics)
+    count = st.slider("Số câu hỏi", 1, 5, 3)
+
+    if st.button("Tạo bài kiểm tra", use_container_width=True):
+        try:
+            with st.spinner("Giáo Viên đang soạn câu hỏi..."):
+                questions = tutor.quiz_set(
+                    llm_for(offline),
+                    topic,
+                    build_tone_instruction(profile),
+                    count=count,
+                )
+        except Exception as exc:  # noqa: BLE001 - hiển thị lỗi cho người dùng
+            st.error(f"Không tạo được câu hỏi: {exc}")
+            return
+        if not questions:
+            st.warning("Không nhận được câu hỏi nào.")
+            return
+        st.session_state.quiz = questions
+        st.session_state.quiz_result = None
+
+    questions = st.session_state.get("quiz")
+    if not questions:
+        st.caption("Bấm **Tạo bài kiểm tra** để bắt đầu.")
+        return
+
+    answers: list[int] = []
+    for index, question in enumerate(questions, start=1):
+        st.markdown(f"**Câu {index}.** {question.question}")
+        choice = st.radio(
+            "Chọn đáp án",
+            options=list(range(len(question.options))),
+            format_func=lambda i, q=question: f"{i}. {q.options[i]}",
+            key=f"quiz-{index}-{question.question[:30]}",
+            label_visibility="collapsed",
+        )
+        answers.append(choice)
+
+    if st.button("Chấm điểm", type="primary", use_container_width=True):
+        result = tutor.grade(answers, questions)
+        st.session_state.quiz_result = result
+
+    result = st.session_state.get("quiz_result")
+    if result is None:
+        return
+
+    st.metric("Điểm", f"{result.correct}/{result.total}", f"{result.score_pct}%")
+    for line in result.detail:
+        st.write(line)
+    if result.weak_topics:
+        st.warning(
+            "Cần ôn lại:\n\n"
+            + "\n".join(f"- {weak}" for weak in tutor.follow_up_topics(result))
+        )
+    else:
+        st.success("Trả lời đúng hết — có thể chuyển sang chủ đề tiếp theo.")
+
+
 def render_adjust(profile: UserProfile, offline: bool, plan) -> None:
     st.divider()
     st.subheader("5. Lệch kế hoạch? Hội đồng tự điều chỉnh")
     tasks = plan.first_week.tasks if plan.first_week else []
+    if not tasks and plan.weeks:
+        tasks = plan.weeks[0].tasks
     missed = st.multiselect(
         "Buổi bạn đã trượt", [task.title for task in tasks]
     )
@@ -252,7 +480,7 @@ def render_adjust(profile: UserProfile, offline: bool, plan) -> None:
 
 
 def main() -> None:
-    profile, offline = render_sidebar()
+    profile, offline, weeks = render_sidebar()
 
     st.title("Life OS")
     st.caption(
@@ -273,7 +501,9 @@ def main() -> None:
         try:
             with st.status("Hội đồng đang làm việc...", expanded=True) as status:
                 plan_result = None
-                for node, update in iter_plan(profile, llm=llm_for(offline)):
+                for node, update in iter_plan(
+                    profile, llm=llm_for(offline), program_weeks=weeks
+                ):
                     st.write(NODE_LABELS.get(node, node))
                     if "plan" in update:
                         plan_result = update["plan"]
@@ -295,6 +525,10 @@ def main() -> None:
     render_gaps(plan)
     render_study_plan(plan)
     render_week(plan.first_week)
+    render_program(plan)
+    render_progress(plan)
+    render_review(plan)
+    render_quiz(plan, profile, offline)
     render_roundtable(plan)
     render_adjust(profile, offline, plan)
 
