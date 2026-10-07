@@ -7,6 +7,10 @@ giọng điệu **thích nghi theo hồ sơ người dùng**.
 Kịch bản demo: *"Chuyển từ hành chính sang Data Analyst trong 6 tháng, vẫn đi làm
 full-time."*
 
+Không chỉ dừng ở lập kế hoạch: hệ thống còn sinh **lịch nhiều tuần**, **theo dõi
+tiến độ**, **ôn tập cách quãng**, **kiểm tra hiểu biết**, và **xuất `.ics`** để
+đưa vào Google Calendar.
+
 ---
 
 ## 1. Ý tưởng cốt lõi: personality kép
@@ -102,6 +106,9 @@ uv run streamlit run app.py
 Trong giao diện có sẵn checkbox **"Dùng LLM giả (offline)"** để chạy thử toàn bộ
 luồng mà không tốn phí API.
 
+Giao diện có thêm các mục **lịch nhiều tuần**, **tiến độ**, **ôn tập cách quãng**,
+**kiểm tra hiểu biết** và nút **tải `.ics`**. Các cờ CLI tương ứng ở [mục 7](#7-sau-khi-có-kế-hoạch-lịch-dài-tiến-độ-ôn-tập-kiểm-tra).
+
 ---
 
 ## 4. Cấu hình LLM
@@ -168,6 +175,9 @@ src/lifeos/
 ├── clarify.py           # phát hiện mục tiêu mơ hồ → câu hỏi làm rõ
 ├── demo.py              # LLM giả cho demo/test offline
 ├── graph.py             # LangGraph: build_graph + adjust_graph
+├── progress.py          # theo dõi tiến độ trên lịch nhiều tuần
+├── persistence.py       # lưu/khôi phục/liệt kê kế hoạch
+├── srs.py               # ôn tập cách quãng (SM-2)
 ├── personas/
 │   ├── base.py          # lớp Persona
 │   ├── registry.py      # 6 persona
@@ -177,7 +187,7 @@ src/lifeos/
 │   ├── store.py         # SQLite: lưu kế hoạch & sự kiện điều chỉnh
 │   └── vector.py        # Chroma: truy xuất ngữ nghĩa
 └── tools/
-    └── calendar.py      # parse ICS, phát hiện & dịch khỏi khoảng bận
+    └── calendar.py      # parse/ghi ICS, phát hiện & dịch khỏi khoảng bận
 ```
 
 ---
@@ -191,6 +201,12 @@ uv run pytest -q
 - `test_personas.py` — persona + tone adapter + câu hỏi làm rõ
 - `test_calendar.py` — parse ICS, khoảng bận, dịch giờ
 - `test_scheduler.py` — ngân sách giờ, tránh khoảng bận, chuẩn hoá
+- `test_program.py` — phân bổ module theo tuần + sinh lịch nhiều tuần không cần LLM
+- `test_progress.py` — đánh dấu buổi học, % hoàn thành, streak, đúng/chệch tiến độ
+- `test_persistence.py` — lưu, khôi phục, cập nhật và liệt kê kế hoạch
+- `test_ics_export.py` — xuất `.ics`, ánh xạ tuần → ngày thật, đọc lại được
+- `test_srs.py` — giãn khoảng cách SM-2, reset khi quên, chặn trên/dưới
+- `test_quiz.py` — quiz nhiều câu, chấm điểm, phát hiện chủ đề yếu
 - `test_llm.py` — trích JSON chịu lỗi + cascade structured output
 - `test_graph.py` — tích hợp: lập kế hoạch, vòng giảm tải, điều chỉnh, lưu trữ
 - `test_app.py` — giao diện Streamlit qua `AppTest` (chạy offline)
@@ -203,7 +219,37 @@ endpoint thật.
 
 ---
 
-## 7. Xử lý tình huống lệch kế hoạch
+## 7. Sau khi có kế hoạch: lịch dài, tiến độ, ôn tập, kiểm tra
+
+Luồng lập kế hoạch chỉ sinh **tuần 1** bằng LLM. Bốn tính năng dưới đây biến nó
+thành thứ dùng được hàng ngày — và **không tốn thêm lời gọi LLM nào**, vì đều là
+logic thuần có test:
+
+| Tính năng | Module | Ghi chú |
+|---|---|---|
+| **Lịch nhiều tuần** | `scheduler.allocate_modules` | Chia module theo số giờ, giữ thứ tự học; module dài bị cắt qua nhiều tuần. Tuần 2+ sinh bằng công thức nên lộ trình 26 tuần vẫn mất ~1 phút thay vì 26 lần gọi LLM |
+| **Theo dõi tiến độ** | `progress.py` | Đánh dấu từng buổi, tính % hoàn thành, số giờ, **chuỗi tuần hoàn thành liên tiếp**, và cảnh báo chệch tiến độ |
+| **Lưu & khôi phục** | `persistence.py` | Kế hoạch lưu vào SQLite, mở lại được ở phiên sau kèm % tiến độ |
+| **Ôn tập cách quãng** | `srs.py` | SM-2 rút gọn: nhớ tốt → giãn 1 → 6 → `interval × ease` ngày; quên → reset và tăng `lapses` |
+| **Kiểm tra hiểu biết** | `tutor.quiz_set` + `tutor.grade` | Nhiều câu một lượt, chấm điểm, chỉ ra **câu hỏi bị sai** để biết phần nào cần ôn |
+| **Xuất lịch** | `calendar.tasks_to_ics` | Ánh xạ "tuần N + thứ" → **ngày tháng thật**, xuất `.ics` import vào Google Calendar |
+
+Một chi tiết đáng chú ý: khi hội đồng kết luận kế hoạch **quá tải** và giảm tải
+tuần 1, hệ số giảm đó được **áp cho toàn bộ chương trình** (`load_factor` xuyên
+qua `program_node`). Nếu chỉ giảm tuần 1 thì tuần 2 trở đi lại đầy 100% ngân
+sách — đúng cái mà hội đồng vừa bác bỏ.
+
+Dùng qua CLI:
+
+```powershell
+uv run python scripts/demo_run.py --weeks 12 --progress --quiz `
+    --ics data/lich.ics --save
+uv run python scripts/demo_run.py --list-plans    # xem lại kế hoạch đã lưu
+```
+
+---
+
+## 8. Xử lý tình huống lệch kế hoạch
 
 `adjust_plan()` chạy đồ thị thứ hai:
 
@@ -219,13 +265,22 @@ tại chỗ** (có test kiểm chứng).
 
 ---
 
-## 8. Giới hạn của MVP
+## 9. Giới hạn của MVP
 
 - Giao diện và nội dung mẫu bằng **tiếng Việt**.
-- Lịch ở mức "tuần lặp lại" (Mon–Sun), chưa gắn với ngày tháng cụ thể.
-- Tích hợp lịch mới ở mức **đọc file ICS**; chưa có OAuth Google Calendar.
+- Lịch nhiều tuần sinh theo **công thức** cho tuần 2 trở đi: đúng ngân sách giờ
+  và thứ tự module, nhưng không "thông minh" như tuần 1 do LLM lập.
+- Xuất `.ics` được, nhưng **chưa có OAuth** Google Calendar (import thủ công).
 - `tools/search.py` còn là stub.
-- Chưa có spaced-repetition thật; `tutor.quiz()` mới sinh một câu hỏi.
+- Thẻ ôn tập chưa được lưu xuống SQLite — mới tồn tại trong phiên làm việc.
+- Quiz chấm theo **đáp án cố định** do LLM sinh, chưa kiểm chứng lại tính đúng
+  của đáp án đó.
 
-**Hướng mở rộng:** gắn Google Calendar, thêm agent luyện phỏng vấn, lịch sử nhiều
-mục tiêu song song, và đánh giá bằng bộ test eval lớn hơn.
+**Hướng mở rộng:** gắn Google Calendar qua OAuth, lưu thẻ SRS, thêm agent luyện
+phỏng vấn, nhiều mục tiêu song song, và bộ test eval lớn hơn.
+
+---
+
+## 10. Giấy phép
+
+MIT — xem [LICENSE](LICENSE).
