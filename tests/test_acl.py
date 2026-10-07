@@ -168,6 +168,45 @@ def test_broadcast_empty_receiver_list():
     assert len(bus) == 0
 
 
+# --- MessageBus: notify (gửi xuôi chiều) ---
+
+
+def test_notify_keeps_declared_direction():
+    bus = MessageBus()
+    request = bus.request("orchestrator", "tutor", "x")
+    award = bus.notify(
+        request, "orchestrator", "tutor", Performative.ACCEPT_PROPOSAL, "bạn thắng"
+    )
+    assert award.sender == "orchestrator"
+    assert award.receiver == "tutor"
+
+
+def test_notify_joins_conversation_and_links_reply():
+    bus = MessageBus()
+    request = bus.request("o", "t", "x")
+    award = bus.notify(request, "o", "t", Performative.ACCEPT_PROPOSAL, "ok")
+    assert award.conversation_id == request.conversation_id
+    assert award.protocol == request.protocol
+    assert award.in_reply_to == request.reply_with
+
+
+def test_notify_differs_from_reply_direction():
+    bus = MessageBus()
+    request = bus.request("o", "t", "x")
+    reversed_msg = bus.reply(request, "t", Performative.PROPOSE, "tôi làm")
+    forward_msg = bus.notify(request, "o", "t", Performative.ACCEPT_PROPOSAL, "ok")
+
+    assert reversed_msg.receiver == "o"
+    assert forward_msg.receiver == "t"
+
+
+def test_notify_uses_request_protocol():
+    bus = MessageBus()
+    request = bus.request("o", "t", "x", protocol="contract-net")
+    award = bus.notify(request, "o", "t", Performative.ACCEPT_PROPOSAL, "ok")
+    assert award.protocol == "contract-net"
+
+
 # --- MessageBus: truy vấn ---
 
 

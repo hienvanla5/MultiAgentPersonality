@@ -150,6 +150,35 @@ class MessageBus:
             )
         )
 
+    def notify(
+        self,
+        original: ACLMessage,
+        sender: str,
+        receiver: str,
+        performative: Performative,
+        content: str,
+        *,
+        metadata: Optional[dict] = None,
+    ) -> ACLMessage:
+        """Gửi tin **xuôi chiều** trong cùng hội thoại.
+
+        Khác `reply()` (vốn đảo người gửi/người nhận), hàm này giữ nguyên chiều
+        do bạn chỉ định. Cần cho Contract Net: bộ điều phối phải chủ động gửi
+        `accept-proposal` tới người thắng, chứ không phải trả lời ngược lại.
+        """
+        return self.send(
+            ACLMessage(
+                performative=performative,
+                sender=sender,
+                receiver=receiver,
+                content=content,
+                conversation_id=original.conversation_id,
+                protocol=original.protocol,
+                in_reply_to=original.reply_with,
+                metadata=metadata or {},
+            )
+        )
+
     def broadcast(
         self,
         sender: str,
