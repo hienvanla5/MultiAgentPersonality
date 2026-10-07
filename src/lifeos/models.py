@@ -181,6 +181,8 @@ class ProgramProgress(BaseModel):
     hours_done: int = 0
     hours_planned: int = 0
     current_week: int = 1
+    streak: int = 0
+    missed: int = 0
     on_track: bool = True
     note: str = ""
 
