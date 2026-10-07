@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     def chroma_dir(self) -> Path:
         return Path(self.chroma_path)
 
+    @property
+    def db_url(self) -> str:
+        return f"sqlite:///{self.db_path}"
+
 
 @lru_cache
 def get_settings() -> Settings:

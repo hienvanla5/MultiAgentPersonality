@@ -71,3 +71,37 @@ class Store:
                 .first()
             )
             return rec.payload if rec else None
+
+    def get_plan(self, plan_id: int) -> Optional[dict]:
+        """Lấy payload của một kế hoạch theo id."""
+        with self.session() as s:
+            rec = s.get(PlanRecord, plan_id)
+            return rec.payload if rec else None
+
+    def list_plans(self, limit: int = 20) -> list[dict]:
+        """Liệt kê kế hoạch đã lưu, mới nhất trước."""
+        with self.session() as s:
+            recs = (
+                s.query(PlanRecord)
+                .order_by(PlanRecord.id.desc())
+                .limit(max(1, limit))
+                .all()
+            )
+            return [
+                {
+                    "id": rec.id,
+                    "goal_summary": rec.goal_summary,
+                    "created_at": rec.created_at,
+                }
+                for rec in recs
+            ]
+
+    def update_plan(self, plan_id: int, payload: dict) -> bool:
+        """Ghi đè payload của một kế hoạch (dùng khi cập nhật tiến độ)."""
+        with self.session() as s:
+            rec = s.get(PlanRecord, plan_id)
+            if rec is None:
+                return False
+            rec.payload = payload
+            s.commit()
+            return True
