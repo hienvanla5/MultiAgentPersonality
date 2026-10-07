@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from lifeos.agents.schemas import Critique, GapList, Quiz, Synthesis
+from lifeos.agents.schemas import Critique, GapList, Quiz, QuizSet, Synthesis
 from lifeos.models import (
     CommunicationStyle,
     EnergyWindow,
@@ -64,6 +64,18 @@ class FakeLLM:
         if schema is Quiz:
             return Quiz(
                 question="q", options=["a", "b"], answer_index=0, explanation="e"
+            )
+        if schema is QuizSet:
+            return QuizSet(
+                questions=[
+                    Quiz(
+                        question=f"q{i}",
+                        options=["a", "b"],
+                        answer_index=0,
+                        explanation="e",
+                    )
+                    for i in range(1, 4)
+                ]
             )
         raise AssertionError(f"FakeLLM không hỗ trợ schema {schema.__name__}")
 

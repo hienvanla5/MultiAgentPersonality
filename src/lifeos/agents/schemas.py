@@ -30,3 +30,9 @@ class Quiz(BaseModel):
     options: list[str] = Field(default_factory=list)
     answer_index: int = 0
     explanation: str = ""
+
+
+class QuizSet(BaseModel):
+    """Nhiều câu hỏi trắc nghiệm cho một chủ đề."""
+
+    questions: list[Quiz] = Field(default_factory=list)

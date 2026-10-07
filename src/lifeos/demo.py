@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from .agents.schemas import Critique, GapList, Quiz, Synthesis
+from .agents.schemas import Critique, GapList, Quiz, QuizSet, Synthesis
 from .models import (
     ScheduleTask,
     SkillGap,
@@ -40,6 +40,7 @@ class DemoLLM:
             "Critique": self._critique,
             "Synthesis": self._synthesis,
             "Quiz": self._quiz,
+            "QuizSet": self._quiz_set,
         }.get(schema.__name__)
         if handler is None:
             raise NotImplementedError(f"DemoLLM chưa hỗ trợ schema: {schema.__name__}")
@@ -280,6 +281,46 @@ class DemoLLM:
                 "nên bạn không mất gì cả."
             ),
         )
+
+    def _quiz_set(self, _prompt: str) -> QuizSet:
+        base = self._quiz("")
+        extras = [
+            Quiz(
+                question=(
+                    "Muốn đếm số đơn hàng theo từng tháng trong bảng 'orders' "
+                    "(cột order_date), bạn dùng cách nào?"
+                ),
+                options=[
+                    "GROUP BY tháng của order_date",
+                    "ORDER BY order_date",
+                    "WHERE order_date = tháng",
+                    "SELECT DISTINCT order_date",
+                ],
+                answer_index=0,
+                explanation=(
+                    "Cần gom nhóm theo tháng rồi đếm, nên phải GROUP BY biểu thức "
+                    "tháng của order_date kèm COUNT(*)."
+                ),
+            ),
+            Quiz(
+                question=(
+                    "Bảng 'orders' có nhiều dòng trùng customer_id. Muốn mỗi khách "
+                    "chỉ hiện một lần, bạn làm gì?"
+                ),
+                options=[
+                    "SELECT DISTINCT customer_id",
+                    "SELECT COUNT(customer_id)",
+                    "DELETE các dòng trùng",
+                    "Thêm WHERE customer_id IS NOT NULL",
+                ],
+                answer_index=0,
+                explanation=(
+                    "DISTINCT loại bỏ giá trị trùng khi truy vấn, không cần sửa "
+                    "dữ liệu gốc."
+                ),
+            ),
+        ]
+        return QuizSet(questions=[base, *extras])
 
     def _quiz(self, _prompt: str) -> Quiz:
         return Quiz(
