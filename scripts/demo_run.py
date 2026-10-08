@@ -236,6 +236,42 @@ def print_reflection(store) -> None:
     print(f"  {stats.reason}")
 
 
+def print_srs_persistence(plan, store) -> None:
+    """Lưu thẻ ôn tập xuống SQLite rồi đọc lại để chứng minh thẻ không mất."""
+    print("\n[13] THẺ ÔN TẬP LƯU XUỐNG SQLITE")
+    today = date.today()
+    plan_id = persistence.save_plan(store, plan)
+    print(f"  Kế hoạch được lưu với id #{plan_id}")
+
+    cards = srs.cards_from_plan(plan, today=today)
+    if not cards:
+        print("  Lộ trình chưa có module nên chưa có thẻ nào.")
+        return
+
+    written = persistence.save_review_cards(store, plan_id, cards)
+    print(f"  Đã ghi {written} thẻ.")
+
+    # Ghi lại lần nữa: phải ghi đè, không nhân đôi
+    persistence.save_review_cards(store, plan_id, cards)
+    print(f"  Ghi lại lần hai -> vẫn {store.count_cards(plan_id)} thẻ (ghi đè).")
+
+    # Mô phỏng một lượt ôn rồi đọc lại từ DB
+    topic = cards[0].topic
+    updated = persistence.review_and_save(store, plan_id, topic, quality=5, today=today)
+    print(f"  Ôn thẻ '{topic}' -> hẹn lại sau {updated.interval_days} ngày.")
+
+    reloaded = persistence.load_review_cards(store, plan_id)
+    match = next(c for c in reloaded if c.topic == topic)
+    print(f"  Đọc lại từ SQLite: {len(reloaded)} thẻ, thẻ vừa ôn có")
+    print(
+        f"    lặp {match.repetitions} lần, khoảng cách {match.interval_days} ngày, "
+        f"đến hạn {match.due_date.isoformat()}"
+    )
+
+    due = persistence.due_review_cards(store, plan_id, today=today)
+    print(f"  Đến hạn hôm nay: {len(due)} thẻ.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Demo Life OS")
     parser.add_argument(
@@ -271,6 +307,11 @@ def main() -> None:
         "--adapt",
         action="store_true",
         help="Suy ngẫm từ kế hoạch đã lưu để điều chỉnh mức tải kế hoạch mới",
+    )
+    parser.add_argument(
+        "--srs",
+        action="store_true",
+        help="Lưu thẻ ôn tập xuống SQLite rồi đọc lại để kiểm chứng",
     )
     args = parser.parse_args()
 
@@ -349,6 +390,9 @@ def main() -> None:
     if args.save:
         plan_id = persistence.save_plan(persistence.default_store(), plan)
         print(f"\n[LƯU] Kế hoạch id #{plan_id} (xem lại bằng --list-plans)")
+
+    if args.srs:
+        print_srs_persistence(plan, persistence.default_store())
 
     if not args.skip_adjust:
         print("\n--- Tiến độ điều chỉnh ---")

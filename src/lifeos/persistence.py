@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from functools import lru_cache
 from typing import Optional
 
@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from .config import get_settings
 from .memory import Store
-from .models import LifeOSPlan
+from .models import LifeOSPlan, ReviewCard
 
 
 class PlanSummary(BaseModel):
@@ -49,6 +49,75 @@ def load_plan(store: Store, plan_id: int) -> Optional[LifeOSPlan]:
 def update_plan(store: Store, plan_id: int, plan: LifeOSPlan) -> bool:
     """Ghi lại kế hoạch sau khi người dùng cập nhật tiến độ."""
     return store.update_plan(plan_id, plan.model_dump(mode="json"))
+
+
+# --- thẻ ôn tập cách quãng (SRS) ---
+
+
+def save_review_cards(
+    store: Store, plan_id: int, cards: list[ReviewCard]
+) -> int:
+    """Lưu thẻ ôn tập xuống SQLite, ghi đè theo khoá (plan_id, topic).
+
+    Không có bước này thì thẻ chỉ sống trong phiên làm việc và mất khi tải lại
+    trang — nghĩa là vòng ôn tập cách quãng không bao giờ tích luỹ được.
+    """
+    now = datetime.now().isoformat(timespec="seconds")
+    return store.save_cards(
+        plan_id, [c.model_dump(mode="json") for c in cards], updated_at=now
+    )
+
+
+def load_review_cards(store: Store, plan_id: int) -> list[ReviewCard]:
+    """Đọc thẻ ôn tập của một kế hoạch. Bỏ qua bản ghi không đọc được."""
+    cards: list[ReviewCard] = []
+    for row in store.load_cards(plan_id):
+        try:
+            cards.append(ReviewCard.model_validate(row))
+        except Exception:  # noqa: BLE001 - bản ghi hỏng không chặn phần còn lại
+            continue
+    return cards
+
+
+def due_review_cards(
+    store: Store, plan_id: int, today: Optional[date] = None
+) -> list[ReviewCard]:
+    """Thẻ đã đến hạn ôn của một kế hoạch."""
+    day = (today or date.today()).isoformat()
+    cards: list[ReviewCard] = []
+    for row in store.due_cards(plan_id, today=day):
+        try:
+            cards.append(ReviewCard.model_validate(row))
+        except Exception:  # noqa: BLE001 - bỏ qua bản ghi hỏng
+            continue
+    return cards
+
+
+def review_and_save(
+    store: Store,
+    plan_id: int,
+    topic: str,
+    quality: int,
+    today: Optional[date] = None,
+) -> Optional[ReviewCard]:
+    """Chấm một thẻ rồi lưu ngay. Trả về None nếu không tìm thấy thẻ.
+
+    Lịch ôn mới được tính bằng `srs.review` rồi ghi đè xuống DB, nên lần mở sau
+    sẽ thấy đúng ngày đến hạn mới.
+    """
+    from .srs import review as srs_review
+
+    row = store.get_card(plan_id, topic)
+    if row is None:
+        return None
+    try:
+        card = ReviewCard.model_validate(row)
+    except Exception:  # noqa: BLE001 - bản ghi hỏng coi như không có thẻ
+        return None
+
+    updated = srs_review(card, quality, today=today)
+    save_review_cards(store, plan_id, [updated])
+    return updated
 
 
 def list_plans(store: Store, limit: int = 20) -> list[PlanSummary]:
