@@ -35,6 +35,13 @@ packages = ["src/lifeos"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 asyncio_mode = "auto"
+# Bộ test mặc định KHÔNG chạm mạng. `test_eval.py` gọi LLM thật nên được đánh dấu
+# `eval` và bị loại ra ở đây; chạy riêng bằng `uv run pytest -q -m eval`. Tham số
+# `-m` trên dòng lệnh ghi đè giá trị này (pytest lấy lần xuất hiện cuối cùng).
+addopts = "-m 'not eval'"
+markers = [
+    "eval: gọi LLM thật qua mạng (cần LLM_API_KEY và quota), mặc định bị loại ra",
+]
 
 # ============================================================
 # Lint gate — cấu hình TƯỜNG MINH, không dựa vào default của ruff
