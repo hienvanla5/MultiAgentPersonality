@@ -275,6 +275,8 @@ uv run pytest -q
 - `test_autonomy.py` — trạng thái nội bộ, tự đánh giá, quyền từ chối, độ tin cậy
 - `test_contract_net.py` — đủ 4 pha thương lượng, trao thầu tất định, hết năng lực
 - `test_team.py` — phân rã mục tiêu, nhóm co giãn theo kỹ năng cần có
+- `test_llm_decomposition.py` — phân rã bằng LLM: dùng kết quả LLM, chuẩn hoá
+  slug tiếng Việt, kẹp giá trị số, và quay về quy tắc khi LLM lỗi
 - `test_parallel.py` — giữ thứ tự, một job lỗi không phá các job khác, nhanh hơn tuần tự
 - `test_reflection.py` — đọc ký ức, tính tỉ lệ hoàn thành, đề xuất hệ số tải
 - `test_calendar.py` — parse ICS, khoảng bận, dịch giờ
@@ -309,7 +311,7 @@ này. Cột "trước" ghi trung thực cả những chỗ còn thiếu.
 |---|---|---|---|---|
 | 1 | **Tự trị** (Autonomy) | ❌ Agent là hàm thuần, không có trạng thái nội bộ, không có quyền từ chối | ✅ Mỗi agent giữ `AgentState` (tải, năng lực, độ tin cậy, lịch sử) và **tự quyết định** nhận việc hay từ chối | `agents/autonomy.py` |
 | 2 | **Tương tác** (Social Ability) | ⚠️ Có `Roundtable` nhưng chỉ là văn bản để hiển thị, không có hành vi giao tiếp | ✅ `ACLMessage` có **performative** (request/inform/propose/refuse/accept-proposal…) + `MessageBus` ghép hội thoại | `acl.py` |
-| 3 | **Cộng tác & phân phối** | ⚠️ `synthesize()` chỉ tổng hợp văn bản; việc phân rã do đồ thị hard-code | ✅ Bộ điều phối **phân rã mục tiêu thành nhiệm vụ** rồi giao qua thương lượng | `agents/team.py` |
+| 3 | **Cộng tác & phân phối** | ⚠️ `synthesize()` chỉ tổng hợp văn bản; việc phân rã do đồ thị hard-code | ✅ Bộ điều phối **phân rã mục tiêu bằng LLM** rồi giao qua thương lượng; LLM lỗi thì có lưới an toàn bằng quy tắc | `agents/team.py` |
 | 4 | **Chuyên môn hóa** | ✅ Đã có — 6 persona, mỗi agent một module riêng | ✅ Giữ nguyên, nay kèm khai báo kỹ năng máy đọc được (`AGENT_SKILLS`) | `personas/registry.py` |
 | 5 | **Thương lượng** (Negotiation) | ❌ **Không có gì** — phản biện nói "quá tải" thì đồ thị tự giảm tải, không ai thương lượng | ✅ **Contract Net Protocol** đủ 4 pha: announce → bid → award → report | `agents/contract_net.py` |
 | 6 | **Tự tổ chức** (Self-Organization) | ❌ Thứ tự node cố định trong `StateGraph` | ✅ Nhóm **co giãn theo việc**: ai không có nhiệm vụ phù hợp thì không được mời; thêm agent mới chỉ cần khai báo kỹ năng | `agents/team.py` |
@@ -398,9 +400,6 @@ tại chỗ** (có test kiểm chứng).
 - `tools/search.py` còn là stub.
 - Quiz chấm theo **đáp án cố định** do LLM sinh, chưa kiểm chứng lại tính đúng
   của đáp án đó.
-- **Phân rã nhiệm vụ là quy tắc cố định**, chưa do LLM sinh. Cấu trúc nhóm thì
-  động, nhưng danh sách nhiệm vụ cho một mục tiêu phát triển bản thân thì giống
-  nhau giữa các mục tiêu.
 - **Chưa có giao tiếp giữa các agent theo thời gian thực.** `MessageBus` ghi lại
   một phiên thương lượng đã kết thúc; các agent không chạy như tiến trình nền
   độc lập gửi tin cho nhau.
@@ -408,9 +407,15 @@ tại chỗ** (có test kiểm chứng).
   chưa có mặc cả nhiều vòng hay liên minh giữa các agent.
 - Học liên tục dựa trên **tỉ lệ hoàn thành**, chưa học từ nội dung phản hồi
   dạng văn bản của người dùng.
+- Phân rã bằng LLM **có lưới an toàn**: nếu LLM lỗi, trả về ít hơn 2 nhiệm vụ,
+  hoặc nhiệm vụ thiếu kỹ năng/mô tả thì hệ thống quay về bộ quy tắc cố định. Bộ
+  quy tắc đó vẫn không phụ thuộc mục tiêu, nên khi nó chạy thì mọi mục tiêu đều
+  ra cùng một danh sách.
+- LLM có thể đề xuất **kỹ năng mà không agent nào có**; hệ thống giữ nguyên
+  nhiệm vụ đó và báo "không ai nhận" thay vì tự gán bừa cho một agent.
 
-**Hướng mở rộng:** gắn Google Calendar qua OAuth, lưu thẻ SRS, phân rã nhiệm vụ
-bằng LLM, thương lượng nhiều vòng, agent chạy nền thật sự, và bộ test eval lớn hơn.
+**Hướng mở rộng:** gắn Google Calendar qua OAuth, thương lượng nhiều vòng, agent
+chạy nền thật sự, và bộ test eval lớn hơn.
 
 ---
 

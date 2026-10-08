@@ -530,7 +530,7 @@ def render_quiz(plan, profile: UserProfile, offline: bool) -> None:
         st.success("Trả lời đúng hết — có thể chuyển sang chủ đề tiếp theo.")
 
 
-def render_team(goal: str) -> None:
+def render_team(goal: str, llm) -> None:
     st.divider()
     st.subheader("10. Tự tổ chức nhóm — phân rã & thương lượng 🤝")
     st.caption(
@@ -538,9 +538,16 @@ def render_team(goal: str) -> None:
         "kỹ năng cần có, rồi để các agent tự bỏ thầu (Contract Net Protocol). "
         "Không agent nào bị gán việc ngoài chuyên môn."
     )
+    st.caption(
+        "Phân rã do LLM đề xuất theo đúng mục tiêu của bạn; nếu LLM lỗi hoặc "
+        "kết quả không dùng được thì tự quay về bộ quy tắc cố định."
+    )
 
     if st.button("Chạy tự tổ chức nhóm", use_container_width=True):
-        st.session_state.team_plan = team.self_organize(goal)
+        try:
+            st.session_state.team_plan = team.self_organize(goal, llm=llm)
+        except Exception as exc:  # noqa: BLE001 - hiển thị lỗi cho người dùng
+            st.error(f"Không tổ chức được nhóm: {exc}")
 
     team_plan = st.session_state.get("team_plan")
     if team_plan is None:
@@ -604,7 +611,6 @@ def render_team(goal: str) -> None:
         for message in bus.messages:
             st.text(message.render())
         st.caption(f"{len(bus)} tin nhắn trong hội thoại.")
-
 
 def render_reflection(plan) -> None:
     """Hiển thị kết quả suy ngẫm từ các kế hoạch trước (nếu có)."""
@@ -746,7 +752,7 @@ def main() -> None:
     render_quiz(plan, profile, offline)
     render_roundtable(plan)
     render_adjust(profile, offline, plan)
-    render_team(profile.goal_summary)
+    render_team(profile.goal_summary, llm_for(offline))
     render_reflection(plan)
 
 
