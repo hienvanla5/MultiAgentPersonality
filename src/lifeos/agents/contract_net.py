@@ -387,22 +387,36 @@ class ContractNet:
         return collected
 
     def _pick_winner(self, bids: list[Bid]) -> Bid:
-        """Chọn thầu tốt nhất; hoà thì ưu tiên chi phí thấp rồi tới tên agent.
-
-        Sắp xếp có tiêu chí phụ để kết quả **tất định** — cùng đầu vào luôn cho
-        cùng người thắng, không phụ thuộc thứ tự duyệt.
-        """
-        return sorted(bids, key=lambda b: (-b.score, b.cost, b.agent))[0]
+        return pick_winner(bids)
 
     def _no_winner_reason(
         self, refusals: list[Refusal], candidates: list[AutonomousAgent]
     ) -> str:
-        if not candidates:
-            return "không có agent nào được đăng ký"
-        if not refusals:
-            return "không agent nào phản hồi"
-        detail = "; ".join(f"{r.agent}: {r.reason}" for r in refusals)
-        return f"tất cả đều từ chối ({detail})"
+        return no_winner_reason(refusals, candidates)
+
+
+def pick_winner(bids: list[Bid]) -> Bid:
+    """Chọn thầu tốt nhất; hoà thì ưu tiên chi phí thấp rồi tới tên agent.
+
+    Sắp xếp có tiêu chí phụ để kết quả **tất định** — cùng đầu vào luôn cho
+    cùng người thắng, không phụ thuộc thứ tự duyệt.
+
+    Đặt ở mức module để runtime bất đồng bộ dùng lại đúng luật trao thầu này,
+    không phải chép lại — hai đường chạy mà lệch luật thì kết quả sẽ khác nhau.
+    """
+    return sorted(bids, key=lambda b: (-b.score, b.cost, b.agent))[0]
+
+
+def no_winner_reason(
+    refusals: list[Refusal], candidates: list[AutonomousAgent]
+) -> str:
+    """Giải thích vì sao không ai nhận việc."""
+    if not candidates:
+        return "không có agent nào được đăng ký"
+    if not refusals:
+        return "không agent nào phản hồi"
+    detail = "; ".join(f"{r.agent}: {r.reason}" for r in refusals)
+    return f"tất cả đều từ chối ({detail})"
 
 
 def summarize(results: list[ContractNetResult]) -> str:
