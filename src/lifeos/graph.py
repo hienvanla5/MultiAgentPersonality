@@ -18,6 +18,7 @@ from .models import (
     AgentMessage,
     Goal,
     LifeOSPlan,
+    Reflection,
     Roundtable,
     SkillGap,
     StudyPlan,
@@ -26,6 +27,7 @@ from .models import (
 )
 from .personas import PERSONAS, build_tone_instruction
 from .parallel import map_parallel
+from .reflection import reflect
 
 REDUCED_LOAD_FACTOR = 0.8
 ADJUST_LOAD_FACTOR = 0.9
@@ -47,6 +49,8 @@ class BuildState(TypedDict, total=False):
     first_week: WeeklySchedule
     weeks: list[WeeklySchedule]
     program_weeks: int
+    advice: str
+    reflection: Reflection
     critique: Critique
     nudge: str
     roundtable: Roundtable
@@ -104,11 +108,20 @@ def build_graph(
             week=1,
             busy=state.get("busy"),
             load_factor=state.get("load_factor", 1.0),
+            # Lời khuyên rút ra từ các kế hoạch trước được đưa thẳng vào prompt,
+            # nhờ đó việc "học từ quá khứ" thay đổi kế hoạch thật sự.
+            note=state.get("advice", ""),
         )
         return {"first_week": week}
 
     def reduce_load_node(state: BuildState) -> dict:
-        return {"load_factor": REDUCED_LOAD_FACTOR, "replanned": True}
+        # NHÂN vào mức tải hiện tại, không gán đè: nếu lịch sử đã hạ mức tải
+        # xuống thấp hơn 0.8 thì gán đè sẽ vô tình làm kế hoạch nặng trở lại.
+        current = float(state.get("load_factor", 1.0))
+        return {
+            "load_factor": round(current * REDUCED_LOAD_FACTOR, 4),
+            "replanned": True,
+        }
 
     def program_node(state: BuildState) -> dict:
         """Mở rộng tuần 1 thành lịch nhiều tuần (các tuần sau sinh thuần logic)."""
@@ -206,6 +219,7 @@ def build_graph(
             first_week=state.get("first_week"),
             weeks=state.get("weeks", []),
             roundtable=rt,
+            reflection=state.get("reflection"),
         )
         return {"roundtable": rt, "plan": plan}
 
@@ -366,24 +380,41 @@ def iter_plan(
     goal: Optional[Goal] = None,
     busy: Optional[dict] = None,
     program_weeks: int = PROGRAM_MAX_WEEKS,
+    past_plans: Optional[list[LifeOSPlan]] = None,
 ) -> Iterator[tuple[str, dict]]:
     """Chạy đồ thị lập kế hoạch, yield (tên_node, cập_nhật) sau mỗi bước.
 
     Dùng để hiển thị tiến độ: model suy luận có thể mất vài phút cho cả luồng.
     `program_weeks` giới hạn số tuần sinh ra trong lịch nhiều tuần.
+
+    Nếu truyền `past_plans`, hệ thống **suy ngẫm** trước khi lập: tìm lại kế
+    hoạch cũ trong bộ nhớ vector và hạ mức tải nếu người dùng hay trượt việc.
     """
     llm = llm or get_llm()
     goal = goal or Goal(description=profile.goal_summary or "Mục tiêu cá nhân")
     tone = build_tone_instruction(profile)
+
+    # Suy ngẫm trước khi lập kế hoạch (chỉ khi có dữ liệu quá khứ để nhìn lại).
+    reflection: Optional[Reflection] = None
+    initial_load = 1.0
+    if past_plans or memory is not None:
+        reflection = reflect(
+            llm, memory, profile, past_plans=past_plans or [], tone=tone
+        )
+        if past_plans:
+            initial_load = reflection.stats.suggested_load_factor
+
     app = build_graph(llm, store=store, memory=memory)
     state: BuildState = {
         "profile": profile,
         "goal": goal,
         "tone": tone,
         "busy": busy or {},
-        "load_factor": 1.0,
+        "load_factor": initial_load,
         "replanned": False,
         "program_weeks": max(1, int(program_weeks)),
+        "advice": reflection.advice if reflection else "",
+        "reflection": reflection,
     }
     for event in app.stream(state):
         for node_name, update in event.items():
@@ -399,6 +430,7 @@ def create_plan(
     goal: Optional[Goal] = None,
     busy: Optional[dict] = None,
     program_weeks: int = PROGRAM_MAX_WEEKS,
+    past_plans: Optional[list[LifeOSPlan]] = None,
 ) -> LifeOSPlan:
     """Lập kế hoạch đầy đủ cho một hồ sơ người dùng."""
     plan: Optional[LifeOSPlan] = None
@@ -410,6 +442,7 @@ def create_plan(
         goal=goal,
         busy=busy,
         program_weeks=program_weeks,
+        past_plans=past_plans,
     ):
         if "plan" in update:
             plan = update["plan"]

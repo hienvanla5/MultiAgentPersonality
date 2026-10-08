@@ -99,3 +99,59 @@ def test_list_plans_skips_corrupt_record(tmp_path):
     assert len(summaries) == 1
     assert summaries[0].weeks == 0
     assert summaries[0].progress_pct == 0
+
+
+# --- recent_plans (dùng cho suy ngẫm) ---
+
+
+def test_recent_plans_returns_full_plans(fake_llm, profile, tmp_path):
+    store = _store(tmp_path)
+    original = create_plan(profile, llm=fake_llm)
+    persistence.save_plan(store, original)
+
+    loaded = persistence.recent_plans(store)
+    assert len(loaded) == 1
+    assert loaded[0].goal.description == original.goal.description
+    assert len(loaded[0].weeks) == len(original.weeks)
+
+
+def test_recent_plans_empty_store(tmp_path):
+    assert persistence.recent_plans(_store(tmp_path)) == []
+
+
+def test_recent_plans_respects_limit(fake_llm, profile, tmp_path):
+    store = _store(tmp_path)
+    for _ in range(3):
+        persistence.save_plan(store, create_plan(profile, llm=fake_llm))
+    assert len(persistence.recent_plans(store, limit=2)) == 2
+
+
+def test_recent_plans_skips_corrupt_record(tmp_path):
+    """Payload sai kiểu phải bị bỏ qua, không làm sập quá trình suy ngẫm.
+
+    Lưu ý: `{"khong": "hop le"}` KHÔNG phải dữ liệu hỏng — Pydantic bỏ qua field
+    lạ và mọi field của LifeOSPlan đều có mặc định, nên nó thành kế hoạch rỗng.
+    Muốn hỏng thật thì phải sai kiểu.
+    """
+    store = _store(tmp_path)
+    store.save_plan("hỏng", {"weeks": "không phải danh sách"}, "2026-01-01T00:00:00")
+    assert persistence.recent_plans(store) == []
+
+
+def test_recent_plans_accepts_record_with_unknown_fields(tmp_path):
+    """Bản ghi cũ có field lạ vẫn đọc được (bỏ qua field lạ)."""
+    store = _store(tmp_path)
+    store.save_plan("cũ", {"field_khong_con_dung": 1}, "2026-01-01T00:00:00")
+    loaded = persistence.recent_plans(store)
+    assert len(loaded) == 1
+    assert loaded[0].weeks == []
+
+
+def test_recent_plans_preserves_progress(fake_llm, profile, tmp_path):
+    store = _store(tmp_path)
+    plan = create_plan(profile, llm=fake_llm)
+    progress.mark_week(plan, 1, TaskStatus.DONE)
+    persistence.save_plan(store, plan)
+
+    loaded = persistence.recent_plans(store)[0]
+    assert progress.program_progress(loaded).overall_pct > 0

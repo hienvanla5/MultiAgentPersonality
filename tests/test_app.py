@@ -100,3 +100,38 @@ def test_app_marking_progress_updates_report():
 
     metrics = {m.label: m.value for m in app.metric}
     assert metrics.get("Hoàn thành") not in (None, "0%")
+
+
+def test_app_renders_self_organization_section():
+    app = _run_offline_app()
+    app.button[0].click().run()
+    assert not app.exception
+
+    subheaders = " | ".join(item.value for item in app.subheader)
+    assert "Tự tổ chức nhóm" in subheaders
+
+
+def test_app_team_self_organization_runs():
+    app = _run_offline_app()
+    app.button[0].click().run()
+
+    team_buttons = [b for b in app.button if "tự tổ chức nhóm" in b.label]
+    assert team_buttons, "phải có nút chạy tự tổ chức nhóm"
+    team_buttons[0].click().run()
+
+    assert not app.exception
+    success_text = " ".join(item.value for item in app.success)
+    assert "Đã giao đủ" in success_text
+
+
+def test_app_shows_acl_transcript_after_team_run():
+    app = _run_offline_app()
+    app.button[0].click().run()
+
+    team_buttons = [b for b in app.button if "tự tổ chức nhóm" in b.label]
+    team_buttons[0].click().run()
+    assert not app.exception
+
+    text = " ".join(item.value for item in app.text)
+    assert "[request]" in text
+    assert "orchestrator" in text

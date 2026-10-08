@@ -200,6 +200,47 @@ class QuizResult(BaseModel):
         return round(100 * self.correct / self.total) if self.total else 0
 
 
+class Lesson(BaseModel):
+    """Một bài học tìm thấy trong ký ức."""
+
+    goal: str = ""
+    text: str = ""
+    distance: Optional[float] = None
+
+
+class OutcomeStats(BaseModel):
+    """Thống kê kết quả thực tế của các kế hoạch đã qua."""
+
+    plans: int = 0
+    avg_completion: float = 0.0
+    suggested_load_factor: float = 1.0
+    reason: str = ""
+
+
+class Reflection(BaseModel):
+    """Kết quả suy ngẫm trước khi lập kế hoạch mới."""
+
+    lessons: list[Lesson] = Field(default_factory=list)
+    stats: OutcomeStats = Field(default_factory=OutcomeStats)
+    advice: str = ""
+
+    @property
+    def has_lessons(self) -> bool:
+        return bool(self.lessons)
+
+    def prompt_block(self) -> str:
+        """Khối văn bản để chèn vào prompt của agent."""
+        parts: list[str] = []
+        if self.lessons:
+            parts.append("Kinh nghiệm từ các kế hoạch trước:")
+            parts.extend(f"  - [{l.goal}] {l.text}" for l in self.lessons)
+        if self.stats.plans:
+            parts.append(f"Phản hồi thực tế: {self.stats.reason}")
+        if self.advice:
+            parts.append(f"Lời khuyên rút ra: {self.advice}")
+        return "\n".join(parts)
+
+
 class Roundtable(BaseModel):
     topic: str = ""
     turns: list[AgentMessage] = Field(default_factory=list)
@@ -223,3 +264,4 @@ class LifeOSPlan(BaseModel):
     first_week: Optional[WeeklySchedule] = None
     weeks: list[WeeklySchedule] = Field(default_factory=list)
     roundtable: Optional[Roundtable] = None
+    reflection: Optional[Reflection] = None

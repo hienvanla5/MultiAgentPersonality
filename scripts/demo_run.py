@@ -8,8 +8,10 @@ from __future__ import annotations
 import argparse
 from datetime import date
 
-from lifeos import persistence, progress, srs
-from lifeos.agents import tutor
+from lifeos import persistence, progress, reflection, srs
+from lifeos.acl import MessageBus
+from lifeos.agents import team, tutor
+from lifeos.agents.contract_net import ContractNet
 from lifeos.clarify import clarifying_questions
 from lifeos.demo import DemoLLM
 from lifeos.graph import NODE_LABELS, iter_adjust, iter_plan
@@ -175,6 +177,65 @@ def print_quiz(llm, plan) -> None:
             print(f"    - {weak}")
 
 
+def print_team(goal: str) -> None:
+    """In quá trình tự tổ chức nhóm: phân rã, lập nhóm, thương lượng."""
+    print("\n[10] TỰ TỔ CHỨC NHÓM (phân rã → lập nhóm → thương lượng)")
+    plan = team.self_organize(goal)
+
+    print(f"  Mục tiêu: {plan.breakdown.goal}")
+    print(f"  Phân rã thành {len(plan.breakdown.tasks)} nhiệm vụ:")
+    for task in plan.breakdown.tasks:
+        print(
+            f"    - [{task.priority}] {task.id} "
+            f"(kỹ năng: {task.skill}, công sức {task.effort})"
+        )
+
+    print(f"  Nhóm tự lập: {', '.join(plan.members)}")
+    if plan.excluded:
+        print(f"  Không tham gia (không có việc phù hợp): {', '.join(plan.excluded)}")
+
+    print("\n  Kết quả thương lượng Contract Net:")
+    for result in plan.results:
+        if result.assigned:
+            print(
+                f"    ✓ {result.task.id:<14} → {result.awarded_to:<10} "
+                f"({result.bid_count} thầu, {len(result.refusals)} từ chối)"
+            )
+        else:
+            print(f"    ✗ {result.task.id:<14} → không ai nhận: {result.reason}")
+
+
+def print_acl(goal: str) -> None:
+    """In bản ghi tin nhắn ACL của một phiên thương lượng."""
+    print("\n[11] GIAO THỨC ACL (bản ghi tin nhắn)")
+    bus = MessageBus()
+    net = ContractNet(bus)
+    members, _ = team.build_roster(team.decompose(goal))
+
+    # Chỉ chạy một nhiệm vụ để bản ghi đủ ngắn mà vẫn đủ bốn pha.
+    task = team.decompose(goal).tasks[0]
+    net.run(task, members)
+
+    for message in bus.messages:
+        print(f"    {message.render()}")
+    print(f"\n  Tổng {len(bus)} tin nhắn trong hội thoại.")
+
+
+def print_reflection(store) -> None:
+    """In kết quả suy ngẫm từ các kế hoạch đã lưu."""
+    print("\n[12] SUY NGẪM TỪ QUÁ KHỨ")
+    past = persistence.recent_plans(store, limit=5)
+    if not past:
+        print("  Chưa có kế hoạch nào được lưu — không có gì để nhìn lại.")
+        return
+
+    stats = reflection.outcome_stats(past)
+    print(f"  Đã xem {stats.plans} kế hoạch có dữ liệu hoàn thành.")
+    print(f"  Tỉ lệ hoàn thành trung bình: {stats.avg_completion * 100:.0f}%")
+    print(f"  Hệ số tải đề xuất cho lần sau: {stats.suggested_load_factor}")
+    print(f"  {stats.reason}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Demo Life OS")
     parser.add_argument(
@@ -200,6 +261,16 @@ def main() -> None:
     )
     parser.add_argument(
         "--list-plans", action="store_true", help="Liệt kê kế hoạch đã lưu rồi thoát"
+    )
+    parser.add_argument(
+        "--team",
+        action="store_true",
+        help="Chạy tự tổ chức nhóm + in bản ghi giao thức ACL",
+    )
+    parser.add_argument(
+        "--adapt",
+        action="store_true",
+        help="Suy ngẫm từ kế hoạch đã lưu để điều chỉnh mức tải kế hoạch mới",
     )
     args = parser.parse_args()
 
@@ -233,14 +304,37 @@ def main() -> None:
         print("Chế độ: LLM giả (offline demo)")
 
     plan = None
+    past_plans = (
+        persistence.recent_plans(persistence.default_store(), limit=5)
+        if args.adapt
+        else None
+    )
+    if args.adapt:
+        print(f"Chế độ thích ứng: xem lại {len(past_plans or [])} kế hoạch đã lưu.")
+
     print("\n--- Tiến độ lập kế hoạch ---")
-    for node, update in iter_plan(profile, llm=llm, program_weeks=args.weeks):
+    for node, update in iter_plan(
+        profile, llm=llm, program_weeks=args.weeks, past_plans=past_plans
+    ):
         print(f"  {NODE_LABELS.get(node, node)}")
         if "plan" in update:
             plan = update["plan"]
     if plan is None:
         raise SystemExit("Đồ thị không trả về kế hoạch.")
     print_plan(plan)
+
+    if plan.reflection is not None:
+        print("\n[SUY NGẪM]")
+        print(f"  {plan.reflection.stats.reason}")
+        if plan.reflection.advice:
+            print(f"  Lời khuyên: {plan.reflection.advice[:300]}")
+
+    if args.team:
+        print_team(profile.goal_summary)
+        print_acl(profile.goal_summary)
+
+    if args.adapt:
+        print_reflection(persistence.default_store())
 
     if args.progress:
         print_progress(plan)

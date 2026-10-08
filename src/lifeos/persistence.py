@@ -78,3 +78,20 @@ def list_plans(store: Store, limit: int = 20) -> list[PlanSummary]:
             )
         )
     return summaries
+
+
+def recent_plans(store: Store, limit: int = 5) -> list[LifeOSPlan]:
+    """Lấy các kế hoạch gần đây để suy ngẫm.
+
+    Bản ghi hỏng bị bỏ qua thay vì làm sập cả quá trình lập kế hoạch mới.
+    """
+    plans: list[LifeOSPlan] = []
+    for row in store.list_plans(limit):
+        payload = store.get_plan(row["id"])
+        if payload is None:
+            continue
+        try:
+            plans.append(LifeOSPlan.model_validate(payload))
+        except Exception:  # noqa: BLE001 - bỏ qua bản ghi không đọc được
+            continue
+    return plans

@@ -156,3 +156,98 @@ def test_reduced_load_propagates_to_whole_program(fake_llm, profile):
 def test_program_weeks_limit_is_respected(fake_llm, profile):
     plan = create_plan(profile, llm=fake_llm, program_weeks=3)
     assert len(plan.weeks) == 3
+
+
+# --- học từ quá khứ (reflection) ---
+
+
+def _past_plan_with_misses(count: int, misses: int) -> "LifeOSPlan":
+    from lifeos.models import (
+        LifeOSPlan,
+        ScheduleTask,
+        TaskStatus,
+        TaskType,
+        WeeklySchedule,
+    )
+
+    tasks = [
+        ScheduleTask(
+            id=f"p{i}",
+            title=f"việc {i}",
+            task_type=TaskType.STUDY,
+            day="Mon",
+            start="20:00",
+            duration_min=60,
+            status=TaskStatus.MISSED if i < misses else TaskStatus.DONE,
+        )
+        for i in range(count)
+    ]
+    week = WeeklySchedule(week=1, tasks=tasks, total_hours=count)
+    return LifeOSPlan(weeks=[week], first_week=week)
+
+
+def test_plan_records_reflection_when_past_plans_given(fake_llm, profile):
+    plan = create_plan(
+        profile, llm=fake_llm, past_plans=[_past_plan_with_misses(4, 0)]
+    )
+    assert plan.reflection is not None
+    assert plan.reflection.stats.plans == 1
+
+
+def test_no_reflection_when_no_history(fake_llm, profile):
+    plan = create_plan(profile, llm=fake_llm)
+    assert plan.reflection is None
+
+
+def test_poor_history_reduces_planned_load(fake_llm_cls, profile):
+    """Trượt nhiều ở quá khứ thì kế hoạch mới phải nhẹ hơn.
+
+    Dùng hai LLM độc lập: bộ đếm "quá tải" của FakeLLM bị tiêu thụ sau lần gọi
+    đầu, nên dùng chung một instance sẽ so sánh nhầm nguyên nhân.
+    """
+    baseline = create_plan(profile, llm=fake_llm_cls())
+    adapted = create_plan(
+        profile,
+        llm=fake_llm_cls(),
+        past_plans=[_past_plan_with_misses(4, 4)],
+    )
+
+    baseline_peak = max(w.total_hours for w in baseline.weeks)
+    adapted_peak = max(w.total_hours for w in adapted.weeks)
+    assert adapted_peak < baseline_peak
+    assert adapted.reflection.stats.suggested_load_factor < 1.0
+
+
+def test_good_history_keeps_full_load(fake_llm_cls, profile):
+    baseline = create_plan(profile, llm=fake_llm_cls())
+    adapted = create_plan(
+        profile,
+        llm=fake_llm_cls(),
+        past_plans=[_past_plan_with_misses(4, 0)],
+    )
+    assert max(w.total_hours for w in adapted.weeks) == max(
+        w.total_hours for w in baseline.weeks
+    )
+    assert adapted.reflection.stats.suggested_load_factor == 1.0
+
+
+def test_reduce_load_multiplies_instead_of_overwriting(fake_llm, profile):
+    """Giảm tải phải NHÂN vào mức hiện tại, không gán đè thành 0.8.
+
+    Lịch sử toàn trượt -> mức tải ban đầu 0.75. Hội đồng kết luận quá tải nên
+    giảm tiếp: đúng phải là 0.75 x 0.8 = 0.6 (trần 6h với 10h/tuần). Nếu code
+    gán đè thành 0.8 thì trần sẽ là 8h — tức là vô tình làm kế hoạch NẶNG hơn
+    mức mà lịch sử đã chỉ ra là quá sức.
+    """
+    plan = create_plan(
+        profile, llm=fake_llm, past_plans=[_past_plan_with_misses(4, 4)]
+    )
+    reduced_ceiling = int(profile.hours_per_week * 0.75 * 0.8)
+    overwrite_ceiling = int(profile.hours_per_week * 0.8)
+
+    peak = max(w.total_hours for w in plan.weeks)
+    assert peak <= reduced_ceiling, (
+        f"trần {peak}h vượt mức nhân đúng ({reduced_ceiling}h) — "
+        f"có thể load_factor đang bị gán đè thành {overwrite_ceiling}h"
+    )
+    assert reduced_ceiling < overwrite_ceiling

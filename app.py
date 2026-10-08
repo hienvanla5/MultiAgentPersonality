@@ -9,8 +9,10 @@ from datetime import date
 
 import streamlit as st
 
-from lifeos import progress, srs
-from lifeos.agents import tutor
+from lifeos import persistence, progress, srs
+from lifeos.acl import MessageBus
+from lifeos.agents import team, tutor
+from lifeos.agents.contract_net import ContractNet
 from lifeos.clarify import clarifying_questions
 from lifeos.config import get_settings
 from lifeos.demo import DemoLLM
@@ -64,7 +66,7 @@ PERSONA_AVATAR = {
 }
 
 
-def render_sidebar() -> tuple[UserProfile, bool, int]:
+def render_sidebar() -> tuple[UserProfile, bool, int, bool]:
     st.sidebar.title("🧭 Life OS")
     st.sidebar.caption(
         "Hồ sơ dùng để cá nhân hoá kế hoạch **và** giọng điệu của mọi agent."
@@ -101,6 +103,14 @@ def render_sidebar() -> tuple[UserProfile, bool, int]:
         value=not has_api_key(),
         help="Bật để chạy thử toàn bộ luồng mà không tốn phí API.",
     )
+    adapt = st.sidebar.checkbox(
+        "Học từ kế hoạch đã lưu",
+        value=False,
+        help=(
+            "Đọc lại các kế hoạch trong SQLite để suy ngẫm. Nếu bạn hay trượt "
+            "việc, kế hoạch mới sẽ tự nhẹ hơn."
+        ),
+    )
     if not offline and not has_api_key():
         st.sidebar.warning("Chưa có `LLM_API_KEY` trong `.env`.")
 
@@ -129,7 +139,7 @@ def render_sidebar() -> tuple[UserProfile, bool, int]:
             "Model suy luận có thể mất 30-60s mỗi bước — cả luồng vài phút. "
             "Nếu quá chậm, đổi `LLM_MODEL` sang `deepseek-v4.1-flash`."
         )
-    return profile, offline, weeks
+    return profile, offline, weeks, adapt
 
 
 def llm_for(offline: bool):
@@ -436,6 +446,104 @@ def render_quiz(plan, profile: UserProfile, offline: bool) -> None:
         st.success("Trả lời đúng hết — có thể chuyển sang chủ đề tiếp theo.")
 
 
+def render_team(goal: str) -> None:
+    st.divider()
+    st.subheader("10. Tự tổ chức nhóm — phân rã & thương lượng 🤝")
+    st.caption(
+        "Bộ điều phối phân rã mục tiêu thành nhiệm vụ, tự chọn thành viên theo "
+        "kỹ năng cần có, rồi để các agent tự bỏ thầu (Contract Net Protocol). "
+        "Không agent nào bị gán việc ngoài chuyên môn."
+    )
+
+    if st.button("Chạy tự tổ chức nhóm", use_container_width=True):
+        st.session_state.team_plan = team.self_organize(goal)
+
+    team_plan = st.session_state.get("team_plan")
+    if team_plan is None:
+        st.caption("Bấm nút để xem nhóm tự hình thành như thế nào.")
+        return
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.markdown("**Nhiệm vụ sau khi phân rã**")
+        st.dataframe(
+            [
+                {
+                    "Ưu tiên": task.priority,
+                    "Nhiệm vụ": task.id,
+                    "Kỹ năng": task.skill,
+                    "Công sức": task.effort,
+                }
+                for task in team_plan.breakdown.tasks
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+    with col_b:
+        st.markdown("**Nhóm tự lập**")
+        st.write(", ".join(team_plan.members) or "(không có ai)")
+        if team_plan.excluded:
+            st.caption(f"Không tham gia: {', '.join(team_plan.excluded)}")
+
+    st.markdown("**Kết quả thương lượng**")
+    st.dataframe(
+        [
+            {
+                "Nhiệm vụ": result.task.id,
+                "Người nhận": result.awarded_to or "—",
+                "Số thầu": result.bid_count,
+                "Từ chối": len(result.refusals),
+                "Ghi chú": result.reason,
+            }
+            for result in team_plan.results
+        ],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    if team_plan.fully_staffed:
+        st.success(
+            f"Đã giao đủ {team_plan.assigned_count}/{len(team_plan.results)} nhiệm vụ."
+        )
+    else:
+        st.warning(
+            f"Chưa giao được: {', '.join(team_plan.unassigned)}. "
+            "Không agent nào đủ năng lực hoặc đúng chuyên môn."
+        )
+
+    with st.expander("Bản ghi giao thức ACL"):
+        bus = MessageBus()
+        net = ContractNet(bus)
+        members, _ = team.build_roster(team_plan.breakdown)
+        if members and team_plan.breakdown.tasks:
+            net.run(team_plan.breakdown.tasks[0], members)
+        for message in bus.messages:
+            st.text(message.render())
+        st.caption(f"{len(bus)} tin nhắn trong hội thoại.")
+
+
+def render_reflection(plan) -> None:
+    """Hiển thị kết quả suy ngẫm từ các kế hoạch trước (nếu có)."""
+    reflection = plan.reflection
+    if reflection is None:
+        return
+    st.divider()
+    st.subheader("11. Suy ngẫm từ quá khứ 🔁")
+    if reflection.stats.plans:
+        col_a, col_b, col_c = st.columns(3)
+        col_a.metric("Kế hoạch đã xem", reflection.stats.plans)
+        col_b.metric(
+            "Hoàn thành trung bình",
+            f"{reflection.stats.avg_completion * 100:.0f}%",
+        )
+        col_c.metric("Hệ số tải đề xuất", reflection.stats.suggested_load_factor)
+        st.write(reflection.stats.reason)
+    if reflection.advice:
+        st.info(reflection.advice)
+    if not reflection.has_lessons and not reflection.stats.plans:
+        st.caption("Chưa có dữ liệu quá khứ để học.")
+
+
 def render_adjust(profile: UserProfile, offline: bool, plan) -> None:
     st.divider()
     st.subheader("5. Lệch kế hoạch? Hội đồng tự điều chỉnh")
@@ -480,7 +588,7 @@ def render_adjust(profile: UserProfile, offline: bool, plan) -> None:
 
 
 def main() -> None:
-    profile, offline, weeks = render_sidebar()
+    profile, offline, weeks, adapt = render_sidebar()
 
     st.title("Life OS")
     st.caption(
@@ -499,10 +607,24 @@ def main() -> None:
 
     if st.button("Lập kế hoạch", type="primary", use_container_width=True):
         try:
+            # Đọc kế hoạch cũ để suy ngẫm: nếu người dùng hay trượt việc thì
+            # kế hoạch mới sẽ nhẹ hơn. Bỏ qua nếu chưa có gì trong DB.
+            past_plans: list = []
+            if adapt:
+                try:
+                    past_plans = persistence.recent_plans(
+                        persistence.default_store(), limit=5
+                    )
+                except Exception:  # noqa: BLE001 - DB lỗi không chặn lập kế hoạch
+                    past_plans = []
+
             with st.status("Hội đồng đang làm việc...", expanded=True) as status:
                 plan_result = None
                 for node, update in iter_plan(
-                    profile, llm=llm_for(offline), program_weeks=weeks
+                    profile,
+                    llm=llm_for(offline),
+                    program_weeks=weeks,
+                    past_plans=past_plans,
                 ):
                     st.write(NODE_LABELS.get(node, node))
                     if "plan" in update:
@@ -531,6 +653,8 @@ def main() -> None:
     render_quiz(plan, profile, offline)
     render_roundtable(plan)
     render_adjust(profile, offline, plan)
+    render_team(profile.goal_summary)
+    render_reflection(plan)
 
 
 main()

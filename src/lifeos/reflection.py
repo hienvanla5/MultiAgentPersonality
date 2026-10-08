@@ -19,11 +19,9 @@ from __future__ import annotations
 
 from typing import Iterable, Optional
 
-from pydantic import BaseModel, Field
-
 from .llm import LLM
 from .memory import VectorMemory
-from .models import LifeOSPlan, UserProfile
+from .models import Lesson, LifeOSPlan, OutcomeStats, Reflection, UserProfile
 from .progress import program_progress
 
 #: Ngưỡng tỉ lệ hoàn thành để quyết định mức tải cho lần sau.
@@ -36,47 +34,6 @@ FULL_COMPLETION_FACTOR = 1.0
 
 #: Không kết luận gì khi có quá ít dữ liệu.
 MIN_PLANS_FOR_ADAPTATION = 1
-
-
-class Lesson(BaseModel):
-    """Một bài học tìm thấy trong ký ức."""
-
-    goal: str = ""
-    text: str = ""
-    distance: Optional[float] = None
-
-
-class OutcomeStats(BaseModel):
-    """Thống kê kết quả thực tế của các kế hoạch đã qua."""
-
-    plans: int = 0
-    avg_completion: float = 0.0
-    suggested_load_factor: float = FULL_COMPLETION_FACTOR
-    reason: str = ""
-
-
-class Reflection(BaseModel):
-    """Kết quả suy ngẫm trước khi lập kế hoạch mới."""
-
-    lessons: list[Lesson] = Field(default_factory=list)
-    stats: OutcomeStats = Field(default_factory=OutcomeStats)
-    advice: str = ""
-
-    @property
-    def has_lessons(self) -> bool:
-        return bool(self.lessons)
-
-    def prompt_block(self) -> str:
-        """Khối văn bản để chèn vào prompt của agent."""
-        parts: list[str] = []
-        if self.lessons:
-            parts.append("Kinh nghiệm từ các kế hoạch trước:")
-            parts.extend(f"  - [{l.goal}] {l.text}" for l in self.lessons)
-        if self.stats.plans:
-            parts.append(f"Phản hồi thực tế: {self.stats.reason}")
-        if self.advice:
-            parts.append(f"Lời khuyên rút ra: {self.advice}")
-        return "\n".join(parts)
 
 
 # --- nguồn 1: ký ức ngữ nghĩa ---
