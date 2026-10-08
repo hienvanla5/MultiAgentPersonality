@@ -177,10 +177,12 @@ def print_quiz(llm, plan) -> None:
             print(f"    - {weak}")
 
 
-def print_team(goal: str) -> None:
+def print_team(goal: str, llm=None) -> None:
     """In quá trình tự tổ chức nhóm: phân rã, lập nhóm, thương lượng."""
     print("\n[10] TỰ TỔ CHỨC NHÓM (phân rã → lập nhóm → thương lượng)")
-    plan = team.self_organize(goal)
+    plan = team.self_organize(goal, llm=llm)
+    source = "LLM phân rã" if llm is not None else "quy tắc cố định"
+    print(f"  Nguồn phân rã: {source}")
 
     print(f"  Mục tiêu: {plan.breakdown.goal}")
     print(f"  Phân rã thành {len(plan.breakdown.tasks)} nhiệm vụ:")
@@ -205,16 +207,21 @@ def print_team(goal: str) -> None:
             print(f"    ✗ {result.task.id:<14} → không ai nhận: {result.reason}")
 
 
-def print_acl(goal: str) -> None:
+def print_acl(goal: str, llm=None) -> None:
     """In bản ghi tin nhắn ACL của một phiên thương lượng."""
     print("\n[11] GIAO THỨC ACL (bản ghi tin nhắn)")
     bus = MessageBus()
     net = ContractNet(bus)
-    members, _ = team.build_roster(team.decompose(goal))
+
+    # Phân rã một lần rồi dùng lại — gọi hai lần sẽ tốn thêm một lượt LLM.
+    breakdown = team.decompose(goal, llm=llm)
+    members, _ = team.build_roster(breakdown)
+    if not breakdown.tasks or not members:
+        print("  Không có nhiệm vụ hoặc không có thành viên nào để thương lượng.")
+        return
 
     # Chỉ chạy một nhiệm vụ để bản ghi đủ ngắn mà vẫn đủ bốn pha.
-    task = team.decompose(goal).tasks[0]
-    net.run(task, members)
+    net.run(breakdown.tasks[0], members)
 
     for message in bus.messages:
         print(f"    {message.render()}")
@@ -371,8 +378,9 @@ def main() -> None:
             print(f"  Lời khuyên: {plan.reflection.advice[:300]}")
 
     if args.team:
-        print_team(profile.goal_summary)
-        print_acl(profile.goal_summary)
+        # Phân rã bằng chính LLM đang dùng (thật hoặc giả), có lưới an toàn.
+        print_team(profile.goal_summary, llm=llm)
+        print_acl(profile.goal_summary, llm=llm)
 
     if args.adapt:
         print_reflection(persistence.default_store())

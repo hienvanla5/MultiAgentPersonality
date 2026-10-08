@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import pytest
 
-from lifeos.agents.schemas import Critique, GapList, Quiz, QuizSet, Synthesis
+from lifeos.agents.schemas import (
+    Critique,
+    DecomposedTask,
+    GapList,
+    Quiz,
+    QuizSet,
+    Synthesis,
+    TaskBreakdown,
+)
 from lifeos.models import (
     CommunicationStyle,
     EnergyWindow,
@@ -75,6 +83,39 @@ class FakeLLM:
                         explanation="e",
                     )
                     for i in range(1, 4)
+                ]
+            )
+        if schema is TaskBreakdown:
+            return TaskBreakdown(
+                tasks=[
+                    DecomposedTask(
+                        id="doc-jd",
+                        description="Đọc tin tuyển dụng",
+                        skill="gap-analysis",
+                        priority=1,
+                        effort=0.3,
+                    ),
+                    DecomposedTask(
+                        id="lo-trinh",
+                        description="Xếp lộ trình học",
+                        skill="curriculum",
+                        priority=1,
+                        effort=0.4,
+                    ),
+                    DecomposedTask(
+                        id="lich-tuan",
+                        description="Chia buổi tối",
+                        skill="scheduling",
+                        priority=2,
+                        effort=0.4,
+                    ),
+                    DecomposedTask(
+                        id="giu-dong-luc",
+                        description="Viết lời nhắc",
+                        skill="motivation",
+                        priority=3,
+                        effort=0.1,
+                    ),
                 ]
             )
         raise AssertionError(f"FakeLLM không hỗ trợ schema {schema.__name__}")

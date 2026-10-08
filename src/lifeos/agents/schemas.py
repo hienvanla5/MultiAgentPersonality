@@ -36,3 +36,25 @@ class QuizSet(BaseModel):
     """Nhiều câu hỏi trắc nghiệm cho một chủ đề."""
 
     questions: list[Quiz] = Field(default_factory=list)
+
+
+class DecomposedTask(BaseModel):
+    """Một nhiệm vụ do LLM đề xuất, ở dạng **thô**.
+
+    Cố ý không ràng buộc `priority`/`effort` ở đây. `autonomy.Task` yêu cầu
+    `1 <= priority <= 3` và `0 < effort <= 1`; nếu áp ràng buộc đó lên schema
+    gửi cho LLM thì một giá trị hơi lệch cũng làm hỏng cả lần gọi có cấu trúc.
+    Thà nhận giá trị thô rồi kẹp lại ở `team._normalize_tasks`.
+    """
+
+    id: str = ""
+    description: str = ""
+    skill: str = ""
+    priority: int = 2
+    effort: float = 0.3
+
+
+class TaskBreakdown(BaseModel):
+    """Kết quả phân rã mục tiêu thành nhiệm vụ do LLM sinh."""
+
+    tasks: list[DecomposedTask] = Field(default_factory=list)

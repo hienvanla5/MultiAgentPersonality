@@ -8,7 +8,15 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from .agents.schemas import Critique, GapList, Quiz, QuizSet, Synthesis
+from .agents.schemas import (
+    Critique,
+    DecomposedTask,
+    GapList,
+    Quiz,
+    QuizSet,
+    Synthesis,
+    TaskBreakdown,
+)
 from .models import (
     ScheduleTask,
     SkillGap,
@@ -41,6 +49,7 @@ class DemoLLM:
             "Synthesis": self._synthesis,
             "Quiz": self._quiz,
             "QuizSet": self._quiz_set,
+            "TaskBreakdown": self._task_breakdown,
         }.get(schema.__name__)
         if handler is None:
             raise NotImplementedError(f"DemoLLM chưa hỗ trợ schema: {schema.__name__}")
@@ -280,6 +289,50 @@ class DemoLLM:
                 "lượng: tuần này bạn chỉ cần 3 buổi tối. Thứ tự học không đổi, "
                 "nên bạn không mất gì cả."
             ),
+        )
+
+    def _task_breakdown(self, prompt: str) -> TaskBreakdown:
+        """Phân rã mẫu cho kịch bản "chuyển sang Data Analyst".
+
+        Cố ý **khác** quy tắc cố định trong `team._rule_tasks`: chỉ có 4 nhiệm
+        vụ và không có nhiệm vụ `risk-review`, nên agent `critic` không được
+        mời. Nhờ vậy nhìn vào demo là thấy ngay đường LLM có thật sự chạy hay
+        không, và thấy nhóm co giãn theo mục tiêu.
+        """
+        return TaskBreakdown(
+            tasks=[
+                DecomposedTask(
+                    id="doc-jd",
+                    description=(
+                        "Đọc 10 tin tuyển Data Analyst để chốt kỹ năng nào "
+                        "thật sự được hỏi nhiều"
+                    ),
+                    skill="gap-analysis",
+                    priority=1,
+                    effort=0.3,
+                ),
+                DecomposedTask(
+                    id="lo-trinh",
+                    description="Xếp thứ tự học SQL, thống kê, rồi pandas",
+                    skill="curriculum",
+                    priority=1,
+                    effort=0.4,
+                ),
+                DecomposedTask(
+                    id="lich-tuan",
+                    description="Chia lộ trình thành các buổi tối 90 phút",
+                    skill="scheduling",
+                    priority=2,
+                    effort=0.4,
+                ),
+                DecomposedTask(
+                    id="giu-dong-luc",
+                    description="Viết lời nhắc cho những tuần dễ bỏ nhất",
+                    skill="motivation",
+                    priority=3,
+                    effort=0.1,
+                ),
+            ]
         )
 
     def _quiz_set(self, _prompt: str) -> QuizSet:
