@@ -11,7 +11,8 @@ from datetime import date
 from lifeos import persistence, progress, reflection, srs
 from lifeos.acl import MessageBus
 from lifeos.agents import team, tutor
-from lifeos.agents.contract_net import ContractNet
+from lifeos.agents.autonomy import AutonomousAgent, Task
+from lifeos.agents.contract_net import ContractNet, summarize
 from lifeos.clarify import clarifying_questions
 from lifeos.demo import DemoLLM
 from lifeos.graph import NODE_LABELS, iter_adjust, iter_plan
@@ -199,12 +200,83 @@ def print_team(goal: str, llm=None) -> None:
     print("\n  Kết quả thương lượng Contract Net:")
     for result in plan.results:
         if result.assigned:
+            note = ""
+            if result.negotiated:
+                note += f" [{result.round_count} vòng]"
+            if result.partial:
+                note += (
+                    f" ⚠ chỉ {result.agreed_effort:.2f}/{result.original_effort:.2f}"
+                    f" công sức, còn {result.remaining_effort:.2f} chưa ai nhận"
+                )
             print(
                 f"    ✓ {result.task.id:<14} → {result.awarded_to:<10} "
-                f"({result.bid_count} thầu, {len(result.refusals)} từ chối)"
+                f"({result.bid_count} thầu, {len(result.refusals)} từ chối){note}"
             )
         else:
             print(f"    ✗ {result.task.id:<14} → không ai nhận: {result.reason}")
+
+    negotiated = [r for r in plan.results if r.negotiated]
+    if negotiated:
+        print(
+            f"\n  {len(negotiated)} nhiệm vụ phải công bố lại điều khoản "
+            f"(chia nhỏ phạm vi cho vừa năng lực thực tế):"
+        )
+        for result in negotiated:
+            for record in result.rounds:
+                mark = "✓" if record.ok else "✗"
+                extra = f" — {record.relaxation}" if record.relaxation else ""
+                print(
+                    f"    {mark} vòng {record.round}: công sức "
+                    f"{record.task.effort:.2f}{extra}"
+                )
+
+
+def print_negotiation() -> None:
+    """In một cuộc thương lượng nhiều vòng khi năng lực của nhóm bị chặt.
+
+    Kịch bản này cố ý thu nhỏ năng lực để lộ ra hành vi mà ở kịch bản thường
+    không thấy: cả nhóm từ chối vì công sức vượt năng lực còn trống, bộ điều
+    phối công bố lại với phạm vi chia nhỏ, và phần chưa ai nhận được ghi rõ.
+    """
+    print("\n[12] THƯƠNG LƯỢNG NHIỀU VÒNG (năng lực bị chặt)")
+    bus = MessageBus()
+    net = ContractNet(bus)
+
+    agent = AutonomousAgent("scheduler", skills=["scheduling"], capacity=0.5)
+    task = Task(
+        id="xep-lich-thang",
+        description="Xếp lịch chi tiết cho cả tháng",
+        skill="scheduling",
+        priority=1,
+        effort=0.9,
+    )
+    print(f"  Agent 'scheduler' chỉ còn {agent.state.available:.2f} năng lực.")
+    print(f"  Nhiệm vụ cần {task.effort:.2f} công sức — vượt năng lực.\n")
+
+    result = net.run(task, [agent])
+    for record in result.rounds:
+        mark = "✓" if record.ok else "✗"
+        print(f"  {mark} Vòng {record.round}: công sức {record.task.effort:.2f}")
+        if record.relaxation:
+            print(f"      nới điều khoản: {record.relaxation}")
+        if record.ok:
+            print(f"      → {record.awarded_to} nhận ({record.reason})")
+        else:
+            print(f"      → không ai nhận: {record.reason}")
+
+    print(f"\n  Kết quả: {result.round_count} vòng, người nhận = {result.awarded_to}")
+    print(
+        f"  Phạm vi đã chốt: {result.agreed_effort:.2f}/"
+        f"{result.original_effort:.2f} công sức"
+    )
+    print(
+        f"  Còn lại chưa ai nhận: {result.remaining_effort:.2f} công sức "
+        f"(partial = {result.partial})"
+    )
+    print(f"  Tải của agent sau khi nhận: {agent.state.load:.2f}/{agent.state.capacity:.2f}")
+    print("\n  Tóm tắt:")
+    for line in summarize([result]).splitlines():
+        print(f"    {line}")
 
 
 def print_acl(goal: str, llm=None) -> None:
@@ -320,6 +392,11 @@ def main() -> None:
         action="store_true",
         help="Lưu thẻ ôn tập xuống SQLite rồi đọc lại để kiểm chứng",
     )
+    parser.add_argument(
+        "--negotiate",
+        action="store_true",
+        help="In một cuộc thương lượng nhiều vòng khi năng lực nhóm bị chặt",
+    )
     args = parser.parse_args()
 
     if args.list_plans:
@@ -381,6 +458,9 @@ def main() -> None:
         # Phân rã bằng chính LLM đang dùng (thật hoặc giả), có lưới an toàn.
         print_team(profile.goal_summary, llm=llm)
         print_acl(profile.goal_summary, llm=llm)
+
+    if args.negotiate:
+        print_negotiation()
 
     if args.adapt:
         print_reflection(persistence.default_store())

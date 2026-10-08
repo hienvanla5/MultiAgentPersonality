@@ -199,7 +199,12 @@ def test_smaller_goal_yields_smaller_team():
 
 
 def test_roster_capacity_limits_concurrent_work():
-    """Một agent năng lực nhỏ không thể nhận hết mọi việc."""
+    """Một agent năng lực nhỏ không thể nhận trọn vẹn mọi việc.
+
+    Từ T3, thương lượng nhiều vòng chia nhỏ phạm vi cho vừa năng lực nên nhiệm
+    vụ thứ hai **được giao một phần** thay vì bị bỏ rơi. Bất biến an toàn vẫn
+    giữ nguyên: agent không bao giờ bị quá tải, và phần chưa làm được ghi rõ ra.
+    """
     breakdown = GoalBreakdown(
         goal="g",
         tasks=[
@@ -214,7 +219,36 @@ def test_roster_capacity_limits_concurrent_work():
 
     results = ContractNet().run_all(breakdown.tasks, members)
     assert results[0].assigned is True
+    assert results[0].partial is False
+
+    # Nhiệm vụ thứ hai chỉ còn 0.4 năng lực -> giao một phần, không bỏ rơi
+    assert results[1].assigned is True
+    assert results[1].partial is True
+    assert results[1].agreed_effort == 0.4
+    assert results[1].remaining_effort == 0.2
+
+    # Bất biến: không agent nào bị giao quá năng lực
+    assert members[0].state.load <= members[0].state.capacity
+    assert members[0].state.load == 0.6 + 0.4
+
+
+def test_roster_capacity_refuses_when_nothing_is_left():
+    """Hết sạch năng lực thì nhiệm vụ phải chịu cảnh không ai nhận."""
+    breakdown = GoalBreakdown(
+        goal="g",
+        tasks=[
+            _task("t1", skill="scheduling", effort=1.0),
+            _task("t2", skill="scheduling", effort=0.6),
+        ],
+    )
+    members, _ = build_roster(breakdown)
+    from lifeos.agents.contract_net import ContractNet
+
+    results = ContractNet().run_all(breakdown.tasks, members)
+    assert results[0].assigned is True
     assert results[1].assigned is False
+    assert results[1].remaining_effort == 0.6
+    assert members[0].state.load <= members[0].state.capacity
 
 
 def _task(task_id: str, skill: str, effort: float = 0.3, priority: int = 2):
