@@ -27,6 +27,12 @@ from lifeos.models import (
 )
 from lifeos.personas import build_tone_instruction
 from lifeos.tools.calendar import tasks_to_ics
+from lifeos.tools.google_calendar import (
+    GoogleCalendarError,
+    build_client,
+    config_from_settings,
+    events_from_weeks,
+)
 
 st.set_page_config(page_title="Life OS", page_icon="🧭", layout="wide")
 
@@ -330,6 +336,86 @@ def render_program(plan) -> None:
         mime="text/calendar",
         use_container_width=True,
     )
+
+    render_google_calendar(plan)
+
+
+def render_google_calendar(plan) -> None:
+    """Đồng bộ trực tiếp lên Google Calendar qua OAuth."""
+    with st.expander("🔗 Đồng bộ thẳng lên Google Calendar (OAuth 2.0)"):
+        st.caption(
+            "Thay vì tải file .ics rồi import tay, ở đây xin quyền qua OAuth 2.0 "
+            "rồi gọi thẳng Google Calendar API. Chỉ xin quyền trên **sự kiện**, "
+            "không xin đọc toàn bộ lịch của bạn."
+        )
+
+        settings = get_settings()
+        config = config_from_settings(settings)
+
+        if not config.client_id:
+            st.info(
+                "Chưa cấu hình `GOOGLE_CLIENT_ID` trong `.env`. Xem `.env.example` "
+                "để biết cách tạo OAuth client ID cho ứng dụng desktop."
+            )
+        else:
+            st.write(f"**Redirect URI** (khai báo đúng trong Google Cloud): `{config.redirect_uri}`")
+            token_state = "đã có token" if config.token_file.exists() else "chưa đăng nhập"
+            st.caption(f"File token: `{config.token_file}` — {token_state}")
+
+        events = events_from_weeks(plan.weeks)
+        st.write(f"Lịch hiện tại có **{len(events)} buổi học** sẽ được đồng bộ.")
+
+        col_a, col_b = st.columns(2)
+        with col_a:
+            preview = st.button(
+                "Xem trước payload", use_container_width=True, key="gcal_preview"
+            )
+        with col_b:
+            sync = st.button(
+                "Đồng bộ ngay",
+                use_container_width=True,
+                key="gcal_sync",
+                disabled=not config.client_id,
+            )
+
+        if preview:
+            st.dataframe(
+                [
+                    {
+                        "Buổi": event["summary"],
+                        "Bắt đầu": event["start"]["dateTime"],
+                        "Khoá": event["extendedProperties"]["private"][
+                            "lifeos_key"
+                        ],
+                    }
+                    for event in events[:20]
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.caption("Chạy khô: chưa gọi mạng, chưa cần credentials.")
+
+        if sync:
+            try:
+                with st.spinner("Đang xin quyền và đồng bộ..."):
+                    client = build_client(
+                        config,
+                        calendar_id=settings.google_calendar_id,
+                        time_zone=settings.google_time_zone,
+                    )
+                    report = client.sync_weeks(plan.weeks)
+            except GoogleCalendarError as exc:
+                st.error(f"Không đồng bộ được: {exc}")
+            else:
+                if report.ok:
+                    st.success(report.summary())
+                    st.caption(
+                        "Chạy lại sẽ cập nhật đúng sự kiện cũ, không tạo trùng."
+                    )
+                else:
+                    st.warning(report.summary())
+                    for error in report.errors:
+                        st.text(error)
 
 
 def render_progress(plan) -> None:

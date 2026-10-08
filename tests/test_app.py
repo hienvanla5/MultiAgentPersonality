@@ -8,6 +8,7 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 from lifeos import persistence
+from lifeos.config import get_settings
 from lifeos.memory import Store
 
 APP_PATH = str(pathlib.Path(__file__).resolve().parents[1] / "app.py")
@@ -315,3 +316,76 @@ def test_app_reloaded_plan_keeps_review_progress(app_store):
         for c in persistence.load_review_cards(app_store, plan_id)
     }
     assert cards[topic] == 1
+
+
+# --- Google Calendar (T5) ---
+
+
+@pytest.fixture(autouse=True)
+def _clear_settings_cache():
+    """`get_settings` được `lru_cache`; xoá cache để test đổi được cấu hình.
+
+    Không xoá thì giá trị đã cache (kể cả bản đã bị monkeypatch) sẽ rò sang
+    các test khác.
+    """
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+def _button(app, label: str):
+    """Tìm nút theo nhãn, không phụ thuộc thứ tự."""
+    matches = [b for b in app.button if label in b.label]
+    assert matches, f"không thấy nút '{label}'"
+    return matches[0]
+
+
+def _plan_app(monkeypatch, client_id: str = "") -> AppTest:
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", client_id)
+    get_settings.cache_clear()
+    app = _run_offline_app()
+    app.button[0].click().run()
+    return app
+
+
+def test_app_google_calendar_section_renders(monkeypatch):
+    app = _plan_app(monkeypatch)
+    assert not app.exception
+    assert _button(app, "Xem trước payload")
+    assert _button(app, "Đồng bộ ngay")
+
+
+def test_app_google_sync_disabled_without_client_id(monkeypatch):
+    """Chưa cấu hình thì không được để người dùng bấm đồng bộ rồi lỗi."""
+    app = _plan_app(monkeypatch, client_id="")
+    assert _button(app, "Đồng bộ ngay").disabled is True
+
+
+def test_app_google_sync_enabled_with_client_id(monkeypatch):
+    app = _plan_app(monkeypatch, client_id="test.apps.googleusercontent.com")
+    assert _button(app, "Đồng bộ ngay").disabled is False
+
+
+def test_app_google_preview_lists_events_without_network(monkeypatch):
+    """Xem trước phải hoạt động khi chưa cấu hình và không chạm mạng."""
+    app = _plan_app(monkeypatch, client_id="")
+    before = len(app.dataframe)
+
+    _button(app, "Xem trước payload").click().run()
+
+    assert not app.exception
+    assert len(app.dataframe) > before
+    text = " ".join(item.value for item in app.caption)
+    assert "Chạy khô" in text
+
+
+def test_app_google_missing_config_shows_guidance(monkeypatch):
+    app = _plan_app(monkeypatch, client_id="")
+    info = " ".join(item.value for item in app.info)
+    assert "GOOGLE_CLIENT_ID" in info
+
+
+def test_app_google_configured_shows_redirect_uri(monkeypatch):
+    app = _plan_app(monkeypatch, client_id="test.apps.googleusercontent.com")
+    text = " ".join(item.value for item in app.markdown)
+    assert "http://localhost:" in text
