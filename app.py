@@ -577,6 +577,12 @@ def render_team(goal: str, llm) -> None:
             st.caption(f"Không tham gia: {', '.join(team_plan.excluded)}")
 
     st.markdown("**Kết quả thương lượng**")
+    st.caption(
+        "Nếu cả nhóm từ chối vì nhiệm vụ đòi hỏi nhiều công sức hơn phần năng "
+        "lực còn trống, bộ điều phối công bố lại với phạm vi chia nhỏ cho vừa "
+        "(tối đa vài vòng). Kỹ năng thì không nới — giao việc ngoài chuyên môn "
+        "còn tệ hơn để việc đó chưa ai làm."
+    )
     st.dataframe(
         [
             {
@@ -584,6 +590,12 @@ def render_team(goal: str, llm) -> None:
                 "Người nhận": result.awarded_to or "—",
                 "Số thầu": result.bid_count,
                 "Từ chối": len(result.refusals),
+                "Vòng": result.round_count,
+                "Phạm vi đã chốt": (
+                    f"{result.agreed_effort:.2f}/{result.original_effort:.2f}"
+                    if result.partial
+                    else f"{result.original_effort:.2f}"
+                ),
                 "Ghi chú": result.reason,
             }
             for result in team_plan.results
@@ -592,9 +604,33 @@ def render_team(goal: str, llm) -> None:
         hide_index=True,
     )
 
-    if team_plan.fully_staffed:
+    negotiated = [r for r in team_plan.results if r.negotiated]
+    if negotiated:
+        with st.expander(
+            f"{len(negotiated)} nhiệm vụ phải công bố lại điều khoản"
+        ):
+            for result in negotiated:
+                st.markdown(f"**{result.task.id}**")
+                for record in result.rounds:
+                    mark = "✅" if record.ok else "❌"
+                    detail = f" — {record.relaxation}" if record.relaxation else ""
+                    st.text(
+                        f"{mark} vòng {record.round}: công sức "
+                        f"{record.task.effort:.2f}{detail}"
+                    )
+
+    if team_plan.fully_covered:
         st.success(
-            f"Đã giao đủ {team_plan.assigned_count}/{len(team_plan.results)} nhiệm vụ."
+            f"Đã giao đủ {team_plan.assigned_count}/{len(team_plan.results)} "
+            "nhiệm vụ với trọn vẹn phạm vi."
+        )
+    elif team_plan.fully_staffed:
+        st.warning(
+            f"Đã giao {team_plan.assigned_count}/{len(team_plan.results)} nhiệm vụ, "
+            f"nhưng {len(team_plan.partial)} nhiệm vụ mới nhận một phần phạm vi "
+            f"({', '.join(team_plan.partial)}). Còn "
+            f"{team_plan.remaining_effort:.2f} công sức chưa có ai nhận — "
+            "nên giãn lịch hoặc tăng năng lực cho agent liên quan."
         )
     else:
         st.warning(

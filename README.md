@@ -174,6 +174,17 @@ rồi đọc lại từ SQLite. Trong giao diện, thanh bên có mục **Kế h
 mở lại kế hoạch cũ kèm tiến độ ôn tập — không có bước này thì `plan_id` chỉ sống
 trong phiên và thẻ cũ sẽ thành mồ côi.
 
+**Xem thương lượng nhiều vòng:**
+
+```powershell
+uv run python scripts/demo_run.py --negotiate --skip-adjust
+```
+
+Kịch bản này cố ý thu nhỏ năng lực của agent xuống dưới mức nhiệm vụ đòi hỏi, để
+lộ ra hành vi mà kịch bản thường không thấy: cả nhóm từ chối ở vòng 1, bộ điều
+phối công bố lại với phạm vi chia nhỏ ở vòng 2, và phần công sức chưa ai nhận
+được ghi rõ thay vì im lặng coi như đã giao xong.
+
 ---
 
 ## 4. Cấu hình LLM
@@ -253,7 +264,7 @@ src/lifeos/
 ├── agents/
 │   ├── career.py … orchestrator.py   # 6 agent chuyên trách
 │   ├── autonomy.py      # AgentState + AutonomousAgent (tự trị)
-│   ├── contract_net.py  # thương lượng phân việc (Contract Net)
+│   ├── contract_net.py  # thương lượng phân việc nhiều vòng (Contract Net)
 │   └── team.py          # phân rã mục tiêu + tự lập nhóm
 ├── memory/
 │   ├── store.py         # SQLite: kế hoạch, sự kiện điều chỉnh, thẻ ôn tập
@@ -274,6 +285,8 @@ uv run pytest -q
 - `test_acl.py` — performative, ghép hội thoại, broadcast, `reply` vs `notify`
 - `test_autonomy.py` — trạng thái nội bộ, tự đánh giá, quyền từ chối, độ tin cậy
 - `test_contract_net.py` — đủ 4 pha thương lượng, trao thầu tất định, hết năng lực
+- `test_multi_round.py` — công bố lại khi công sức vượt năng lực, chia nhỏ phạm
+  vi, ghi rõ phần chưa ai nhận, không bao giờ giao quá tải
 - `test_team.py` — phân rã mục tiêu, nhóm co giãn theo kỹ năng cần có
 - `test_llm_decomposition.py` — phân rã bằng LLM: dùng kết quả LLM, chuẩn hoá
   slug tiếng Việt, kẹp giá trị số, và quay về quy tắc khi LLM lỗi
@@ -313,7 +326,7 @@ này. Cột "trước" ghi trung thực cả những chỗ còn thiếu.
 | 2 | **Tương tác** (Social Ability) | ⚠️ Có `Roundtable` nhưng chỉ là văn bản để hiển thị, không có hành vi giao tiếp | ✅ `ACLMessage` có **performative** (request/inform/propose/refuse/accept-proposal…) + `MessageBus` ghép hội thoại | `acl.py` |
 | 3 | **Cộng tác & phân phối** | ⚠️ `synthesize()` chỉ tổng hợp văn bản; việc phân rã do đồ thị hard-code | ✅ Bộ điều phối **phân rã mục tiêu bằng LLM** rồi giao qua thương lượng; LLM lỗi thì có lưới an toàn bằng quy tắc | `agents/team.py` |
 | 4 | **Chuyên môn hóa** | ✅ Đã có — 6 persona, mỗi agent một module riêng | ✅ Giữ nguyên, nay kèm khai báo kỹ năng máy đọc được (`AGENT_SKILLS`) | `personas/registry.py` |
-| 5 | **Thương lượng** (Negotiation) | ❌ **Không có gì** — phản biện nói "quá tải" thì đồ thị tự giảm tải, không ai thương lượng | ✅ **Contract Net Protocol** đủ 4 pha: announce → bid → award → report | `agents/contract_net.py` |
+| 5 | **Thương lượng** (Negotiation) | ❌ **Không có gì** — phản biện nói "quá tải" thì đồ thị tự giảm tải, không ai thương lượng | ✅ **Contract Net Protocol** đủ 4 pha, **công bố lại nhiều vòng** khi công sức vượt năng lực | `agents/contract_net.py` |
 | 6 | **Tự tổ chức** (Self-Organization) | ❌ Thứ tự node cố định trong `StateGraph` | ✅ Nhóm **co giãn theo việc**: ai không có nhiệm vụ phù hợp thì không được mời; thêm agent mới chỉ cần khai báo kỹ năng | `agents/team.py` |
 | 7 | **Mở rộng & song song** | ❌ Chạy tuần tự hoàn toàn | ✅ `map_parallel` chạy song song hội đồng persona và bước bỏ thầu | `parallel.py` |
 | 8 | **Học liên tục** | ⚠️ Bộ nhớ **chỉ ghi** — `memory.search()` chưa bao giờ được gọi trong luồng thật | ✅ **Suy ngẫm** trước khi lập kế hoạch: đọc lại ký ức + tỉ lệ hoàn thành thật để tự hạ mức tải | `reflection.py` |
@@ -403,8 +416,12 @@ tại chỗ** (có test kiểm chứng).
 - **Chưa có giao tiếp giữa các agent theo thời gian thực.** `MessageBus` ghi lại
   một phiên thương lượng đã kết thúc; các agent không chạy như tiến trình nền
   độc lập gửi tin cho nhau.
-- **Thương lượng một vòng.** Agent bỏ thầu một lần rồi bộ điều phối chọn ngay;
-  chưa có mặc cả nhiều vòng hay liên minh giữa các agent.
+- **Thương lượng nhiều vòng chỉ nới được công sức**, không nới kỹ năng: nếu
+  không agent nào có chuyên môn phù hợp thì dừng ngay ở vòng 1 thay vì công bố
+  lại vô ích. Việc chưa ai nhận được ghi rõ thành `remaining_effort`, nhưng hệ
+  thống chưa tự đề xuất cách xử lý (tăng năng lực, đổi người, hay bỏ việc).
+- Chưa có **liên minh** giữa các agent: mỗi nhiệm vụ vẫn chỉ một agent nhận,
+  chưa có nhóm agent cùng đứng ra nhận một việc lớn.
 - Học liên tục dựa trên **tỉ lệ hoàn thành**, chưa học từ nội dung phản hồi
   dạng văn bản của người dùng.
 - Phân rã bằng LLM **có lưới an toàn**: nếu LLM lỗi, trả về ít hơn 2 nhiệm vụ,
@@ -414,8 +431,8 @@ tại chỗ** (có test kiểm chứng).
 - LLM có thể đề xuất **kỹ năng mà không agent nào có**; hệ thống giữ nguyên
   nhiệm vụ đó và báo "không ai nhận" thay vì tự gán bừa cho một agent.
 
-**Hướng mở rộng:** gắn Google Calendar qua OAuth, thương lượng nhiều vòng, agent
-chạy nền thật sự, và bộ test eval lớn hơn.
+**Hướng mở rộng:** gắn Google Calendar qua OAuth, agent chạy nền thật sự, liên
+minh agent cho việc lớn, và bộ test eval lớn hơn.
 
 ---
 

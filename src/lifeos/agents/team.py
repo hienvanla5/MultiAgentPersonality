@@ -85,8 +85,23 @@ class TeamPlan(BaseModel):
         return [r.task.id for r in self.results if not r.assigned]
 
     @property
+    def partial(self) -> list[str]:
+        """Nhiệm vụ chỉ giao được một phần phạm vi ban đầu."""
+        return [r.task.id for r in self.results if r.partial]
+
+    @property
+    def remaining_effort(self) -> float:
+        """Tổng công sức chưa có ai nhận."""
+        return round(sum(r.remaining_effort for r in self.results), 4)
+
+    @property
     def fully_staffed(self) -> bool:
         return bool(self.results) and not self.unassigned
+
+    @property
+    def fully_covered(self) -> bool:
+        """Vừa giao đủ nhiệm vụ, vừa không nhiệm vụ nào bị cắt bớt phạm vi."""
+        return self.fully_staffed and not self.partial
 
     def summary(self) -> str:
         lines = [
@@ -101,7 +116,15 @@ class TeamPlan(BaseModel):
         for result in self.results:
             mark = "✓" if result.assigned else "✗"
             target = result.awarded_to or f"không ai nhận ({result.reason})"
-            lines.append(f"  {mark} {result.task.id}: {target}")
+            suffix = ""
+            if result.negotiated:
+                suffix += f" [{result.round_count} vòng]"
+            if result.partial:
+                suffix += (
+                    f" [chỉ {result.agreed_effort:.2f}/{result.original_effort:.2f},"
+                    f" còn {result.remaining_effort:.2f}]"
+                )
+            lines.append(f"  {mark} {result.task.id}: {target}{suffix}")
         return "\n".join(lines)
 
 
