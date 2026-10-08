@@ -24,7 +24,6 @@ from lifeos.reflection import (
     suggested_load_factor,
 )
 
-
 # --- tiện ích dựng dữ liệu ---
 
 

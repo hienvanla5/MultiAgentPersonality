@@ -112,7 +112,7 @@ def test_tasks_to_ics_is_parseable_and_has_events():
         start_date=date(2026, 3, 9),
     )
     cal = Calendar.from_ical(ics)
-    events = [c for c in cal.walk("VEVENT")]
+    events = list(cal.walk("VEVENT"))
     assert len(events) == 2
 
 
@@ -120,7 +120,7 @@ def test_tasks_to_ics_summary_and_uid():
     ics = calendar.tasks_to_ics(
         [_week(1, _task("w1-t1", title="Học JOIN"))], start_date=date(2026, 3, 9)
     )
-    event = [c for c in Calendar.from_ical(ics).walk("VEVENT")][0]
+    event = next(iter(Calendar.from_ical(ics).walk("VEVENT")))
     assert str(event["SUMMARY"]) == "Học JOIN"
     assert "w1-t1@lifeos" in str(event["UID"])
 
@@ -148,7 +148,7 @@ def test_tasks_to_ics_description_includes_week_and_module():
     ics = calendar.tasks_to_ics(
         [_week(3, _task("w3-t1"))], start_date=date(2026, 3, 9)
     )
-    event = [c for c in Calendar.from_ical(ics).walk("VEVENT")][0]
+    event = next(iter(Calendar.from_ical(ics).walk("VEVENT")))
     description = str(event["DESCRIPTION"])
     assert "Tuần 3" in description
     assert "SQL" in description
@@ -158,13 +158,13 @@ def test_tasks_to_ics_handles_missing_id_with_generated_uid():
     ics = calendar.tasks_to_ics(
         [_week(1, _task(""))], start_date=date(2026, 3, 9)
     )
-    event = [c for c in Calendar.from_ical(ics).walk("VEVENT")][0]
+    event = next(iter(Calendar.from_ical(ics).walk("VEVENT")))
     assert str(event["UID"]).endswith("@lifeos")
 
 
 def test_tasks_to_ics_empty_weeks_has_no_events():
     ics = calendar.tasks_to_ics([], start_date=date(2026, 3, 9))
-    assert [c for c in Calendar.from_ical(ics).walk("VEVENT")] == []
+    assert list(Calendar.from_ical(ics).walk("VEVENT")) == []
 
 
 def test_tasks_to_ics_spans_multiple_weeks():
@@ -189,7 +189,7 @@ def test_write_ics_creates_file(tmp_path):
     )
     assert result == target
     assert target.exists()
-    assert len([c for c in Calendar.from_ical(target.read_bytes()).walk("VEVENT")]) == 1
+    assert len(list(Calendar.from_ical(target.read_bytes()).walk("VEVENT"))) == 1
 
 
 def test_write_ics_creates_parent_directory(tmp_path):

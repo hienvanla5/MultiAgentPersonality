@@ -371,6 +371,8 @@ uv run pytest -q
 - `test_srs.py` — giãn khoảng cách SM-2, reset khi quên, chặn trên/dưới
 - `test_srs_persistence.py` — thẻ ôn tập lưu xuống SQLite, ghi đè theo
   `(plan_id, topic)`, thẻ đến hạn, chịu được bản ghi hỏng
+- `test_vector_memory.py` — truy xuất ngữ nghĩa, và chịu được phản hồi thiếu dữ
+  liệu từ chromadb thay vì sập
 - `test_quiz.py` — quiz nhiều câu, chấm điểm, phát hiện chủ đề yếu
 - `test_llm.py` — trích JSON chịu lỗi + cascade structured output
 - `test_graph.py` — tích hợp: lập kế hoạch, vòng giảm tải, điều chỉnh, lưu trữ,
@@ -382,6 +384,41 @@ uv run pytest -q
 Test dùng `FakeLLM` tất định nên chạy nhanh và không tốn API. Riêng `test_eval.py`
 gọi API thật và mất vài phút — đó là bài kiểm chứng end-to-end duy nhất chạm
 endpoint thật.
+
+### 6.1. Lint & kiểm tra kiểu
+
+```powershell
+uv run ruff check .          # lint
+uv run ruff check . --fix    # tự sửa phần sửa được
+uv run mypy                  # kiểm tra kiểu trên src/lifeos
+```
+
+Cả hai đã được cấu hình trong `pyproject.toml` và **đang sạch** — chạy lên không
+có cảnh báo nào.
+
+**Vì sao cấu hình tường minh thay vì để mặc định.** Ruff đổi bộ rule mặc định
+giữa các phiên bản: bản 0.16 bật sẵn cả `UP`, `DTZ`, `BLE`, `SIM`. Nếu không
+ghim `select` thì cùng một commit có thể pass ở máy này và fail ở máy khác chỉ vì
+khác phiên bản ruff. `pyproject.toml` ghim đúng bộ rule dự án chủ động chọn.
+
+**Ba rule bị tắt có lý do, không phải để cho qua:**
+
+| Rule | Vì sao tắt |
+|---|---|
+| `E501` | Độ dài dòng để trình soạn thảo lo; chặn ở đây chỉ tạo nhiễu khi review |
+| `UP046`, `UP047` | Ép sang generic kiểu PEP 695 (`class X[T]`) — cú pháp hợp lệ trong 3.12 nhưng đổi cách đánh giá tham số kiểu |
+| `UP042` | Ép `class X(str, Enum)` sang `enum.StrEnum`. **Hai thứ này không tương đương**: `str(X.A)` cho `"X.A"` với `(str, Enum)` nhưng cho `"<giá trị>"` với `StrEnum`. Các enum ở `models.py`/`acl.py` được dùng làm khoá và để hiển thị ở nhiều nơi, nên đổi là đổi hành vi thật |
+
+**Phạm vi kiểm tra kiểu.** `mypy` chỉ chạy trên `src/lifeos`, không chạy trên
+`tests/` hay `scripts/`. Không bật `strict` vì mã nguồn dùng nhiều thư viện không
+có stub (`chromadb`, `icalendar`, `langchain`); bật strict sẽ sinh hàng trăm cảnh
+báo về `Any` mà không chỉ ra lỗi thật.
+
+**Nếu `mypy` báo `INTERNAL ERROR`.** Đây là lỗi môi trường, không phải lỗi mã
+nguồn: khi `uv` gỡ một gói, nó có thể để lại thư mục cụt trong `.venv` (ví dụ
+`psutil/` còn `_psutil_windows.pyd` nhưng mất `__init__.py`). Thư mục đó thành
+namespace package che mất gói thật và làm `mypy` sập khi dò số luồng CPU. Cách
+sửa: xoá thư mục cụt đó rồi chạy lại, hoặc `uv sync --reinstall`.
 
 ---
 

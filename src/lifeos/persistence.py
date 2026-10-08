@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from functools import lru_cache
-from typing import Optional
 
 from pydantic import BaseModel
 
@@ -38,7 +37,7 @@ def save_plan(store: Store, plan: LifeOSPlan) -> int:
     return store.save_plan(goal_text, plan.model_dump(mode="json"), now)
 
 
-def load_plan(store: Store, plan_id: int) -> Optional[LifeOSPlan]:
+def load_plan(store: Store, plan_id: int) -> LifeOSPlan | None:
     """Khôi phục kế hoạch theo id. Trả về None nếu không tìm thấy."""
     payload = store.get_plan(plan_id)
     if payload is None:
@@ -80,7 +79,7 @@ def load_review_cards(store: Store, plan_id: int) -> list[ReviewCard]:
 
 
 def due_review_cards(
-    store: Store, plan_id: int, today: Optional[date] = None
+    store: Store, plan_id: int, today: date | None = None
 ) -> list[ReviewCard]:
     """Thẻ đã đến hạn ôn của một kế hoạch."""
     day = (today or date.today()).isoformat()
@@ -98,8 +97,8 @@ def review_and_save(
     plan_id: int,
     topic: str,
     quality: int,
-    today: Optional[date] = None,
-) -> Optional[ReviewCard]:
+    today: date | None = None,
+) -> ReviewCard | None:
     """Chấm một thẻ rồi lưu ngay. Trả về None nếu không tìm thấy thẻ.
 
     Lịch ôn mới được tính bằng `srs.review` rồi ghi đè xuống DB, nên lần mở sau

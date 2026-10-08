@@ -21,6 +21,8 @@ dependencies = [
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
+    "ruff>=0.9",
+    "mypy>=1.13",
 ]
 
 [build-system]
@@ -33,3 +35,70 @@ packages = ["src/lifeos"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 asyncio_mode = "auto"
+
+# ============================================================
+# Lint gate — cấu hình TƯỜNG MINH, không dựa vào default của ruff
+# ============================================================
+# Ruff đổi bộ rule mặc định giữa các phiên bản (0.16 bật sẵn cả UP, DTZ, BLE,
+# SIM...). Nếu để mặc định thì cùng một commit có thể pass ở máy này và fail ở
+# máy khác chỉ vì khác phiên bản ruff. `select` dưới đây ghim đúng bộ rule mà
+# dự án chủ động chọn.
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+extend-exclude = ["data", ".venv"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes — bắt biến chưa dùng, import thừa, tên chưa định nghĩa
+    "I",   # isort — thứ tự import
+    "B",   # flake8-bugbear — các lỗi logic hay gặp
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade — cú pháp hiện đại cho Python 3.12
+    "SIM", # flake8-simplify
+    "RUF", # rule riêng của ruff
+    "BLE", # flake8-blind-except — bắt `except Exception` không có chủ ý
+]
+ignore = [
+    # Độ dài dòng để trình soạn thảo lo; chặn ở đây chỉ tạo nhiễu khi review.
+    "E501",
+    # UP046/UP047 ép sang generic kiểu PEP 695 (`class X[T]`). Cú pháp hợp lệ
+    # trong 3.12 nhưng đổi cách đánh giá tham số kiểu, không đáng đánh đổi.
+    "UP046",
+    "UP047",
+    # UP042 ép `class X(str, Enum)` sang `enum.StrEnum`. Hai thứ này KHÔNG tương
+    # đương: với `(str, Enum)` thì `str(X.A)` cho `"X.A"`, còn `StrEnum` cho
+    # `"<giá trị>"`. Các enum ở `models.py`/`acl.py` được dùng làm khoá và hiển
+    # thị ở nhiều nơi, nên đổi là đổi hành vi thật, không phải dọn dẹp cú pháp.
+    "UP042",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["lifeos"]
+
+[tool.ruff.lint.per-file-ignores]
+# Test cố ý dùng biến "thừa" để minh hoạ, và cố ý bắt lỗi rộng để kiểm tra
+# đường phòng vệ. Hai rule đó không có ý nghĩa trong ngữ cảnh test.
+"tests/*" = ["BLE001"]
+# Script chẩn đoán có nhiệm vụ đúng là bắt mọi lỗi rồi in ra cho người dùng đọc.
+# Bắt hẹp ở đây sẽ làm nó bỏ sót chính những lỗi nó sinh ra để tìm.
+"scripts/diagnose_llm.py" = ["BLE001"]
+
+# ============================================================
+# Type check
+# ============================================================
+# KHÔNG bật `strict`: mã nguồn dùng nhiều thư viện không có stub (chromadb,
+# icalendar, langchain) nên strict sẽ sinh hàng trăm lỗi về `Any` mà không chỉ
+# ra lỗi thật. Cấu hình dưới đây bắt được lỗi kiểu thật mà vẫn chạy được sạch.
+[tool.mypy]
+python_version = "3.12"
+files = ["src/lifeos"]
+ignore_missing_imports = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_unreachable = true
+show_error_codes = true

@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
-from typing import Optional
 from uuid import uuid4
 
 from icalendar import Calendar, Event
@@ -121,7 +120,7 @@ def shift_off_busy(
 # --- Xuất lịch ra định dạng ICS ---
 
 
-def week_monday(week: int, start_date: Optional[date] = None) -> date:
+def week_monday(week: int, start_date: date | None = None) -> date:
     """Ngày thứ Hai của tuần thứ `week` (tuần 1 bắt đầu từ `start_date`)."""
     base = start_date or date.today()
     base_monday = base - timedelta(days=base.weekday())
@@ -129,7 +128,7 @@ def week_monday(week: int, start_date: Optional[date] = None) -> date:
 
 
 def task_datetimes(
-    task, week: int, start_date: Optional[date] = None
+    task, week: int, start_date: date | None = None
 ) -> tuple[datetime, datetime]:
     """Thời điểm bắt đầu/kết thúc thực tế của một buổi học."""
     day_index = WEEKDAY_NAMES.index(task.day) if task.day in WEEKDAY_NAMES else 0
@@ -146,7 +145,7 @@ def task_datetimes(
 def tasks_to_ics(
     weeks: list[WeeklySchedule],
     *,
-    start_date: Optional[date] = None,
+    start_date: date | None = None,
     calendar_name: str = "Life OS",
 ) -> str:
     """Chuyển lịch nhiều tuần thành chuỗi ICS để import vào Google Calendar.
@@ -187,7 +186,7 @@ def write_ics(
     weeks: list[WeeklySchedule],
     path: str | Path,
     *,
-    start_date: Optional[date] = None,
+    start_date: date | None = None,
     calendar_name: str = "Life OS",
 ) -> Path:
     """Ghi lịch ra file .ics và trả về đường dẫn.

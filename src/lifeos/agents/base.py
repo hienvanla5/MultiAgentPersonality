@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from typing import TypeVar
+
 from pydantic import BaseModel
 
 from ..llm import LLM
 from ..models import LifeOSPlan
 from ..personas import get_persona
+
+TModel = TypeVar("TModel", bound=BaseModel)
 
 
 def structured(
@@ -14,8 +18,8 @@ def structured(
     persona_key: str,
     tone_instruction: str,
     user_prompt: str,
-    schema: type[BaseModel],
-) -> BaseModel:
+    schema: type[TModel],
+) -> TModel:
     """Gọi LLM với system prompt của persona, trả về object theo schema."""
     persona = get_persona(persona_key)
     return llm.structured(

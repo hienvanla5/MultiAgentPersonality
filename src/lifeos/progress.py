@@ -5,15 +5,13 @@ Toàn bộ module này là logic thuần: không gọi LLM, dễ kiểm thử v�
 
 from __future__ import annotations
 
-from typing import Optional
-
 from .models import (
     LifeOSPlan,
     ProgramProgress,
     ScheduleTask,
     TaskStatus,
-    WeekProgress,
     WeeklySchedule,
+    WeekProgress,
 )
 
 
@@ -26,7 +24,7 @@ def all_weeks(plan: LifeOSPlan) -> list[WeeklySchedule]:
     return []
 
 
-def find_task(plan: LifeOSPlan, task_id: str) -> Optional[ScheduleTask]:
+def find_task(plan: LifeOSPlan, task_id: str) -> ScheduleTask | None:
     """Tìm một buổi học theo id."""
     for week in all_weeks(plan):
         for task in week.tasks:

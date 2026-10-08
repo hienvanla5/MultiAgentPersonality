@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from itertools import pairwise
+
 from lifeos.agents import scheduler
 from lifeos.models import ModuleSlice, StudyModule, StudyPlan, WeekAllocation
 from lifeos.tools.calendar import to_minutes
@@ -104,7 +106,7 @@ def test_week_from_allocation_has_no_self_overlap(profile):
 
     for day, spans in by_day.items():
         spans.sort()
-        for (_, end), (next_start, _) in zip(spans, spans[1:]):
+        for (_, end), (next_start, _) in pairwise(spans):
             assert end <= next_start, f"chồng giờ trong ngày {day}"
 
 

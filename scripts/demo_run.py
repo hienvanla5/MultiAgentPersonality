@@ -20,7 +20,6 @@ from lifeos.config import get_settings
 from lifeos.demo import DemoLLM
 from lifeos.graph import NODE_LABELS, iter_adjust, iter_plan
 from lifeos.llm import get_llm, has_api_key
-from lifeos.runtime import AgentRuntime
 from lifeos.models import (
     CommunicationStyle,
     EnergyWindow,
@@ -28,6 +27,7 @@ from lifeos.models import (
     TaskStatus,
     UserProfile,
 )
+from lifeos.runtime import AgentRuntime
 from lifeos.tools.calendar import write_ics
 from lifeos.tools.google_calendar import (
     GoogleCalendarError,

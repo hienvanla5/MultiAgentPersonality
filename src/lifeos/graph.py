@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import datetime
-from typing import Iterator, Optional, TypedDict
+from typing import TypedDict, cast
 
 from langgraph.graph import END, START, StateGraph
 
@@ -25,8 +26,8 @@ from .models import (
     UserProfile,
     WeeklySchedule,
 )
-from .personas import PERSONAS, build_tone_instruction
 from .parallel import map_parallel
+from .personas import PERSONAS, build_tone_instruction
 from .reflection import reflect
 
 REDUCED_LOAD_FACTOR = 0.8
@@ -50,7 +51,9 @@ class BuildState(TypedDict, total=False):
     weeks: list[WeeklySchedule]
     program_weeks: int
     advice: str
-    reflection: Reflection
+    # Có thể là `None` khi không truyền `reflection` vào — `total=False` chỉ nói
+    # khoá là tuỳ chọn, không nói giá trị không được `None`.
+    reflection: Reflection | None
     critique: Critique
     nudge: str
     roundtable: Roundtable
@@ -82,8 +85,8 @@ def _msg(persona_key: str, content: str, tone: str) -> AgentMessage:
 
 def build_graph(
     llm: LLM,
-    store: Optional[Store] = None,
-    memory: Optional[VectorMemory] = None,
+    store: Store | None = None,
+    memory: VectorMemory | None = None,
 ):
     """Dựng đồ thị lập kế hoạch: career -> curriculum -> schedule -> hội đồng -> tổng hợp."""
 
@@ -175,7 +178,10 @@ def build_graph(
                 ),
             ]
         )
-        crit, nudge = outcomes.values[0], outcomes.values[1]
+        # Hai job trả về hai kiểu khác nhau (`Critique` và `str`) nên `map_parallel`
+        # suy ra kiểu chung là `object`; `cast` ghi lại kiểu thật của từng vị trí.
+        crit = cast("Critique | None", outcomes.values[0])
+        nudge = cast("str | None", outcomes.values[1])
         if crit is None:
             # Không có phản biện thì coi như không phát hiện quá tải, nhưng vẫn
             # ghi lại để không âm thầm bỏ qua lỗi.
@@ -259,7 +265,7 @@ def build_graph(
     return graph.compile()
 
 
-def adjust_graph(llm: LLM, store: Optional[Store] = None):
+def adjust_graph(llm: LLM, store: Store | None = None):
     """Dựng đồ thị điều chỉnh: phản biện sự cố -> lập lịch mới -> hội đồng -> chốt."""
 
     def assess_node(state: AdjustState) -> dict:
@@ -374,13 +380,13 @@ NODE_LABELS: dict[str, str] = {
 def iter_plan(
     profile: UserProfile,
     *,
-    llm: Optional[LLM] = None,
-    store: Optional[Store] = None,
-    memory: Optional[VectorMemory] = None,
-    goal: Optional[Goal] = None,
-    busy: Optional[dict] = None,
+    llm: LLM | None = None,
+    store: Store | None = None,
+    memory: VectorMemory | None = None,
+    goal: Goal | None = None,
+    busy: dict | None = None,
     program_weeks: int = PROGRAM_MAX_WEEKS,
-    past_plans: Optional[list[LifeOSPlan]] = None,
+    past_plans: list[LifeOSPlan] | None = None,
 ) -> Iterator[tuple[str, dict]]:
     """Chạy đồ thị lập kế hoạch, yield (tên_node, cập_nhật) sau mỗi bước.
 
@@ -395,7 +401,7 @@ def iter_plan(
     tone = build_tone_instruction(profile)
 
     # Suy ngẫm trước khi lập kế hoạch (chỉ khi có dữ liệu quá khứ để nhìn lại).
-    reflection: Optional[Reflection] = None
+    reflection: Reflection | None = None
     initial_load = 1.0
     if past_plans or memory is not None:
         reflection = reflect(
@@ -424,16 +430,16 @@ def iter_plan(
 def create_plan(
     profile: UserProfile,
     *,
-    llm: Optional[LLM] = None,
-    store: Optional[Store] = None,
-    memory: Optional[VectorMemory] = None,
-    goal: Optional[Goal] = None,
-    busy: Optional[dict] = None,
+    llm: LLM | None = None,
+    store: Store | None = None,
+    memory: VectorMemory | None = None,
+    goal: Goal | None = None,
+    busy: dict | None = None,
     program_weeks: int = PROGRAM_MAX_WEEKS,
-    past_plans: Optional[list[LifeOSPlan]] = None,
+    past_plans: list[LifeOSPlan] | None = None,
 ) -> LifeOSPlan:
     """Lập kế hoạch đầy đủ cho một hồ sơ người dùng."""
-    plan: Optional[LifeOSPlan] = None
+    plan: LifeOSPlan | None = None
     for _node, update in iter_plan(
         profile,
         llm=llm,
@@ -456,9 +462,9 @@ def iter_adjust(
     profile: UserProfile,
     reason: str,
     *,
-    missed: Optional[list[str]] = None,
-    llm: Optional[LLM] = None,
-    store: Optional[Store] = None,
+    missed: list[str] | None = None,
+    llm: LLM | None = None,
+    store: Store | None = None,
 ) -> Iterator[tuple[str, dict]]:
     """Chạy đồ thị điều chỉnh, yield (tên_node, cập_nhật) sau mỗi bước."""
     llm = llm or get_llm()
@@ -481,13 +487,13 @@ def adjust_plan(
     profile: UserProfile,
     reason: str,
     *,
-    missed: Optional[list[str]] = None,
-    llm: Optional[LLM] = None,
-    store: Optional[Store] = None,
+    missed: list[str] | None = None,
+    llm: LLM | None = None,
+    store: Store | None = None,
 ) -> tuple[LifeOSPlan, AdjustmentEvent]:
     """Điều chỉnh kế hoạch khi người dùng lệch tiến độ."""
-    new_plan: Optional[LifeOSPlan] = None
-    event: Optional[AdjustmentEvent] = None
+    new_plan: LifeOSPlan | None = None
+    event: AdjustmentEvent | None = None
     for _node, update in iter_adjust(
         plan, profile, reason, missed=missed, llm=llm, store=store
     ):

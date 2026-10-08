@@ -25,6 +25,7 @@ transport giả nên không cần credentials thật và không chạm mạng.
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import json
 import os
@@ -39,12 +40,12 @@ from dataclasses import dataclass, field
 from datetime import date
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import Any, Optional, Protocol
+from typing import Any, Protocol
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from .calendar import task_datetimes
 from ..models import TaskStatus, WeeklySchedule
+from .calendar import task_datetimes
 
 # --- hằng số ---
 
@@ -71,7 +72,7 @@ EVENT_KEY_PROPERTY = "lifeos_key"
 class GoogleCalendarError(RuntimeError):
     """Lỗi khi làm việc với Google Calendar."""
 
-    def __init__(self, message: str, *, status: Optional[int] = None) -> None:
+    def __init__(self, message: str, *, status: int | None = None) -> None:
         super().__init__(message)
         self.status = status
 
@@ -199,9 +200,9 @@ class Transport(Protocol):
         method: str,
         url: str,
         *,
-        headers: Optional[dict[str, str]] = None,
-        json_body: Optional[dict[str, Any]] = None,
-        form: Optional[dict[str, str]] = None,
+        headers: dict[str, str] | None = None,
+        json_body: dict[str, Any] | None = None,
+        form: dict[str, str] | None = None,
         timeout: float = 30.0,
     ) -> dict[str, Any]:
         ...
@@ -215,12 +216,12 @@ class UrllibTransport:
         method: str,
         url: str,
         *,
-        headers: Optional[dict[str, str]] = None,
-        json_body: Optional[dict[str, Any]] = None,
-        form: Optional[dict[str, str]] = None,
+        headers: dict[str, str] | None = None,
+        json_body: dict[str, Any] | None = None,
+        form: dict[str, str] | None = None,
         timeout: float = 30.0,
     ) -> dict[str, Any]:
-        body: Optional[bytes] = None
+        body: bytes | None = None
         final_headers = dict(headers or {})
 
         if json_body is not None:
@@ -293,14 +294,12 @@ def save_token(token: TokenSet, path: str | Path) -> Path:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(token.model_dump_json(indent=2), encoding="utf-8")
-    try:
+    with contextlib.suppress(OSError):  # pragma: no cover - tuỳ hệ điều hành
         os.chmod(target, 0o600)
-    except OSError:  # pragma: no cover - tuỳ hệ điều hành
-        pass
     return target
 
 
-def load_token(path: str | Path) -> Optional[TokenSet]:
+def load_token(path: str | Path) -> TokenSet | None:
     """Đọc token đã lưu. Trả về None nếu chưa có hoặc file hỏng."""
     target = Path(path)
     if not target.exists():
@@ -333,7 +332,7 @@ def wait_for_code(
     captured: dict[str, str] = {}
 
     class _Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802 - tên do thư viện chuẩn quy định
+        def do_GET(self) -> None:
             query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             captured.update(
                 {key: values[0] for key, values in query.items() if values}
@@ -344,7 +343,7 @@ def wait_for_code(
                 "<h2>Đã kết nối Google Calendar</h2>"
                 "<p>Bạn có thể đóng tab này và quay lại Life OS.</p>"
                 "</body></html>"
-            ).encode("utf-8")
+            ).encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -390,16 +389,16 @@ class OAuthSession:
     def __init__(
         self,
         config: OAuthConfig,
-        token: Optional[TokenSet] = None,
+        token: TokenSet | None = None,
         *,
-        transport: Optional[Transport] = None,
+        transport: Transport | None = None,
     ) -> None:
         self.config = config
         self.token = token
         self.transport = transport or UrllibTransport()
 
     @classmethod
-    def load(cls, config: OAuthConfig, **kwargs) -> "OAuthSession":
+    def load(cls, config: OAuthConfig, **kwargs) -> OAuthSession:
         return cls(config, load_token(config.token_file), **kwargs)
 
     @property
@@ -535,7 +534,7 @@ def _description(task, week: int) -> str:
 def events_from_weeks(
     weeks: list[WeeklySchedule],
     *,
-    start_date: Optional[date] = None,
+    start_date: date | None = None,
     time_zone: str = DEFAULT_TIME_ZONE,
 ) -> list[dict[str, Any]]:
     """Chuyển lịch nhiều tuần thành payload sự kiện của Google Calendar API.
@@ -585,7 +584,7 @@ class GoogleCalendarClient:
         session: OAuthSession,
         *,
         calendar_id: str = "primary",
-        transport: Optional[Transport] = None,
+        transport: Transport | None = None,
         time_zone: str = DEFAULT_TIME_ZONE,
     ) -> None:
         self.session = session
@@ -603,8 +602,8 @@ class GoogleCalendarClient:
         method: str,
         path: str,
         *,
-        json_body: Optional[dict[str, Any]] = None,
-        params: Optional[dict[str, str]] = None,
+        json_body: dict[str, Any] | None = None,
+        params: dict[str, str] | None = None,
         authenticated: bool = True,
     ) -> dict[str, Any]:
         url = f"{CALENDAR_API}{path}"
@@ -615,7 +614,7 @@ class GoogleCalendarClient:
             method, url, headers=headers, json_body=json_body, timeout=30.0
         )
 
-    def find_by_key(self, key: str) -> Optional[str]:
+    def find_by_key(self, key: str) -> str | None:
         """Tìm id sự kiện đã tạo cho một buổi học (nếu có)."""
         payload = self._call(
             "GET",
@@ -680,7 +679,7 @@ class GoogleCalendarClient:
         self,
         weeks: list[WeeklySchedule],
         *,
-        start_date: Optional[date] = None,
+        start_date: date | None = None,
         dry_run: bool = False,
     ) -> SyncReport:
         """Đồng bộ toàn bộ lịch. Một buổi lỗi không làm hỏng cả lượt đồng bộ."""
@@ -733,7 +732,7 @@ def build_client(
     *,
     calendar_id: str = "primary",
     time_zone: str = DEFAULT_TIME_ZONE,
-    transport: Optional[Transport] = None,
+    transport: Transport | None = None,
     interactive: bool = True,
     browser=webbrowser.open,
     timeout: float = 300.0,

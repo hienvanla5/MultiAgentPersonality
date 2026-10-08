@@ -15,11 +15,9 @@ from lifeos.agents.contract_net import (
     MAX_ROUNDS,
     MIN_SLICE_EFFORT,
     ContractNet,
-    ContractNetResult,
-    RoundRecord,
     summarize,
 )
-from lifeos.agents.team import build_roster, decompose, self_organize
+from lifeos.agents.team import self_organize
 
 
 def _agent(key: str, skills: list[str], capacity: float = 1.0) -> AutonomousAgent:

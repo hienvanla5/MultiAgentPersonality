@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import date
-from typing import Iterator, Optional
 
 from sqlalchemy import (
     JSON,
@@ -65,13 +65,13 @@ class ReviewCardRecord(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     plan_id: Mapped[int] = mapped_column(Integer, nullable=False, default=GLOBAL_PLAN_ID)
     topic: Mapped[str] = mapped_column(String(300), nullable=False)
-    module_ref: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    module_ref: Mapped[str | None] = mapped_column(String(300), nullable=True)
     ease: Mapped[float] = mapped_column(Float, nullable=False, default=2.5)
     interval_days: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     repetitions: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     lapses: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     due_date: Mapped[str] = mapped_column(String(10), nullable=False)
-    last_reviewed: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    last_reviewed: Mapped[str | None] = mapped_column(String(10), nullable=True)
     updated_at: Mapped[str] = mapped_column(String(40), nullable=False, default="")
 
 
@@ -117,7 +117,7 @@ class Store:
             s.commit()
             return rec.id
 
-    def latest_plan(self, goal_summary: str) -> Optional[dict]:
+    def latest_plan(self, goal_summary: str) -> dict | None:
         with self.session() as s:
             rec = (
                 s.query(PlanRecord)
@@ -127,7 +127,7 @@ class Store:
             )
             return rec.payload if rec else None
 
-    def get_plan(self, plan_id: int) -> Optional[dict]:
+    def get_plan(self, plan_id: int) -> dict | None:
         """Lấy payload của một kế hoạch theo id."""
         with self.session() as s:
             rec = s.get(PlanRecord, plan_id)
@@ -214,7 +214,7 @@ class Store:
             s.commit()
         return written
 
-    def load_cards(self, plan_id: Optional[int] = None) -> list[dict]:
+    def load_cards(self, plan_id: int | None = None) -> list[dict]:
         """Lấy thẻ đã lưu. Không truyền `plan_id` thì lấy tất cả."""
         with self.session() as s:
             q = s.query(ReviewCardRecord)
@@ -224,7 +224,7 @@ class Store:
             return [_card_to_dict(r) for r in recs]
 
     def due_cards(
-        self, plan_id: Optional[int] = None, today: Optional[str] = None
+        self, plan_id: int | None = None, today: str | None = None
     ) -> list[dict]:
         """Thẻ đã đến hạn, thẻ quá hạn lâu nhất lên trước."""
         cutoff = today or date.today().isoformat()
@@ -239,7 +239,7 @@ class Store:
             ).all()
             return [_card_to_dict(r) for r in recs]
 
-    def get_card(self, plan_id: int, topic: str) -> Optional[dict]:
+    def get_card(self, plan_id: int, topic: str) -> dict | None:
         """Lấy một thẻ theo khoá (plan_id, topic)."""
         with self.session() as s:
             rec = (
@@ -252,7 +252,7 @@ class Store:
             )
             return _card_to_dict(rec) if rec else None
 
-    def count_cards(self, plan_id: Optional[int] = None) -> int:
+    def count_cards(self, plan_id: int | None = None) -> int:
         with self.session() as s:
             q = s.query(ReviewCardRecord)
             if plan_id is not None:
@@ -271,7 +271,7 @@ class Store:
             return int(deleted)
 
 
-def _card_numbers(card: dict) -> Optional[dict]:
+def _card_numbers(card: dict) -> dict | None:
     """Ép các trường số của thẻ về đúng kiểu. Trả về None nếu không đọc được.
 
     Trả về None (thay vì âm thầm dùng giá trị mặc định) để thẻ hỏng bị bỏ qua

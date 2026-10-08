@@ -11,7 +11,6 @@ from lifeos.agents.team import (
     self_organize,
 )
 
-
 # --- decompose ---
 
 

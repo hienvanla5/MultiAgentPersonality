@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from lifeos.graph import REDUCED_LOAD_FACTOR, adjust_plan, create_plan
 from lifeos.memory import Store, VectorMemory
+from lifeos.models import LifeOSPlan
 
 
 def test_create_plan_full_pipeline(fake_llm, profile):
@@ -161,9 +162,8 @@ def test_program_weeks_limit_is_respected(fake_llm, profile):
 # --- học từ quá khứ (reflection) ---
 
 
-def _past_plan_with_misses(count: int, misses: int) -> "LifeOSPlan":
+def _past_plan_with_misses(count: int, misses: int) -> LifeOSPlan:
     from lifeos.models import (
-        LifeOSPlan,
         ScheduleTask,
         TaskStatus,
         TaskType,
