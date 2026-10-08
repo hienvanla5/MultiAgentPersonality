@@ -12,9 +12,10 @@ trước thì phải chạy tuần tự.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Callable, Generic, Optional, Sequence, TypeVar
+from typing import Generic, TypeVar
 
 T = TypeVar("T")
 
@@ -26,8 +27,8 @@ DEFAULT_MAX_WORKERS = 4
 class ParallelResult(Generic[T]):
     """Kết quả chạy song song, giữ nguyên thứ tự đầu vào."""
 
-    values: list[Optional[T]] = field(default_factory=list)
-    errors: list[Optional[str]] = field(default_factory=list)
+    values: list[T | None] = field(default_factory=list)
+    errors: list[str | None] = field(default_factory=list)
     duration_s: float = 0.0
 
     @property
@@ -54,7 +55,7 @@ class ParallelResult(Generic[T]):
 def map_parallel(
     jobs: Sequence[Callable[[], T]],
     *,
-    max_workers: Optional[int] = None,
+    max_workers: int | None = None,
 ) -> ParallelResult[T]:
     """Chạy nhiều hàm không tham số cùng lúc, trả kết quả theo đúng thứ tự.
 
@@ -70,8 +71,8 @@ def map_parallel(
 
     if workers <= 1 or len(jobs) == 1:
         # Không cần thread khi chỉ có một việc.
-        values: list[Optional[T]] = []
-        errors: list[Optional[str]] = []
+        values: list[T | None] = []
+        errors: list[str | None] = []
         for job in jobs:
             try:
                 values.append(job())

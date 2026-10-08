@@ -24,11 +24,12 @@ nếu không ai có kỹ năng phù hợp thì dừng ngay ở vòng 1, không n
 
 from __future__ import annotations
 
-from typing import Iterable, Optional
+from collections.abc import Iterable
+from functools import partial
 
 from pydantic import BaseModel, Field
 
-from ..acl import MessageBus, Performative
+from ..acl import ACLMessage, MessageBus, Performative
 from ..parallel import map_parallel
 from .autonomy import AutonomousAgent, Bid, Refusal, Task
 
@@ -49,7 +50,7 @@ class RoundRecord(BaseModel):
     task: Task
     bids: list[Bid] = Field(default_factory=list)
     refusals: list[Refusal] = Field(default_factory=list)
-    awarded_to: Optional[str] = None
+    awarded_to: str | None = None
     reason: str = ""
     #: Đã nới gì so với vòng trước (rỗng ở vòng 1).
     relaxation: str = ""
@@ -70,7 +71,7 @@ class ContractNetResult(BaseModel):
     conversation_id: str
     bids: list[Bid] = Field(default_factory=list)
     refusals: list[Refusal] = Field(default_factory=list)
-    awarded_to: Optional[str] = None
+    awarded_to: str | None = None
     reason: str = ""
     #: Toàn bộ diễn biến các vòng, kể cả những vòng thất bại.
     rounds: list[RoundRecord] = Field(default_factory=list)
@@ -110,7 +111,7 @@ class ContractNet:
     """Bộ điều phối thương lượng theo Contract Net Protocol."""
 
     def __init__(
-        self, bus: Optional[MessageBus] = None, manager: str = MANAGER
+        self, bus: MessageBus | None = None, manager: str = MANAGER
     ) -> None:
         # Không dùng `bus or MessageBus()`: MessageBus có `__len__` nên một bus
         # RỖNG là falsy, sẽ bị thay bằng bus mới và mọi tin nhắn bị mất.
@@ -135,7 +136,7 @@ class ContractNet:
         candidates = list(agents)
         original = task
         current = task
-        conversation_id: Optional[str] = None
+        conversation_id: str | None = None
         rounds: list[RoundRecord] = []
         relaxation = ""
 
@@ -191,7 +192,7 @@ class ContractNet:
         parallel: bool,
         round_no: int,
         relaxation: str,
-        conversation_id: Optional[str],
+        conversation_id: str | None,
     ) -> tuple[RoundRecord, str]:
         """Một vòng: công bố → thu thầu → trao thầu. Trả về (bản ghi, mã hội thoại)."""
         announcements = self.bus.broadcast(
@@ -295,7 +296,7 @@ class ContractNet:
         )
         return f"[vòng {round_no}] {base}" if round_no > 1 else base
 
-    def _relax(self, task: Task, candidates: list[AutonomousAgent]) -> Optional[Task]:
+    def _relax(self, task: Task, candidates: list[AutonomousAgent]) -> Task | None:
         """Nới điều khoản cho vòng sau. Trả về None nếu không nới được gì.
 
         Chỉ nới **công sức**, và chỉ khi có agent đúng chuyên môn nhưng đang
@@ -355,11 +356,15 @@ class ContractNet:
         self,
         task: Task,
         candidates: list[AutonomousAgent],
-        announcements: list,
+        announcements: list[ACLMessage],
         parallel: bool,
-    ) -> list[tuple[AutonomousAgent, object, Bid | Refusal]]:
+    ) -> list[tuple[AutonomousAgent, ACLMessage, Bid | Refusal]]:
         """Thu thầu từ các agent, tuần tự hoặc song song."""
-        pairs = list(zip(candidates, announcements))
+        # `broadcast` trả về đúng một tin cho mỗi receiver, nên hai danh sách này
+        # luôn khớp độ dài. `strict=True` biến giả định đó thành khẳng định: nếu
+        # có ngày ai đó sửa `broadcast` cho lệch, lỗi nổ ra ngay tại đây thay vì
+        # âm thầm bỏ sót agent cuối.
+        pairs = list(zip(candidates, announcements, strict=True))
 
         if not parallel or len(pairs) <= 1:
             return [
@@ -370,10 +375,10 @@ class ContractNet:
         # Các agent đánh giá độc lập nên chạy song song được. `assess()` chỉ đọc
         # trạng thái và tăng bộ đếm `refused` của chính agent đó.
         outcome = map_parallel(
-            [lambda a=agent: a.assess(task) for agent, _ in pairs],
+            [partial(agent.assess, task) for agent, _ in pairs],
             max_workers=len(pairs),
         )
-        collected: list[tuple[AutonomousAgent, object, Bid | Refusal]] = []
+        collected: list[tuple[AutonomousAgent, ACLMessage, Bid | Refusal]] = []
         for index, (agent, announcement) in enumerate(pairs):
             value = outcome.values[index]
             if value is None:

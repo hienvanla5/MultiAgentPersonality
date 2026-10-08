@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from enum import Enum
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -100,7 +99,7 @@ class ScheduleTask(BaseModel):
     day: str = "Mon"          # Mon..Sun
     start: str = "20:00"      # HH:MM
     duration_min: int = 60
-    module_ref: Optional[str] = None
+    module_ref: str | None = None
     status: TaskStatus = TaskStatus.PLANNED
     notes: str = ""
 
@@ -148,12 +147,12 @@ class ReviewCard(BaseModel):
     """Thẻ ôn tập cách quãng (SRS)."""
 
     topic: str
-    module_ref: Optional[str] = None
+    module_ref: str | None = None
     ease: float = 2.5
     interval_days: int = 1
     repetitions: int = 0
     due_date: date = Field(default_factory=date.today)
-    last_reviewed: Optional[date] = None
+    last_reviewed: date | None = None
     lapses: int = 0
 
 
@@ -205,7 +204,7 @@ class Lesson(BaseModel):
 
     goal: str = ""
     text: str = ""
-    distance: Optional[float] = None
+    distance: float | None = None
 
 
 class OutcomeStats(BaseModel):
@@ -233,7 +232,7 @@ class Reflection(BaseModel):
         parts: list[str] = []
         if self.lessons:
             parts.append("Kinh nghiệm từ các kế hoạch trước:")
-            parts.extend(f"  - [{l.goal}] {l.text}" for l in self.lessons)
+            parts.extend(f"  - [{item.goal}] {item.text}" for item in self.lessons)
         if self.stats.plans:
             parts.append(f"Phản hồi thực tế: {self.stats.reason}")
         if self.advice:
@@ -244,7 +243,7 @@ class Reflection(BaseModel):
 class Roundtable(BaseModel):
     topic: str = ""
     turns: list[AgentMessage] = Field(default_factory=list)
-    synthesis: Optional[AgentMessage] = None
+    synthesis: AgentMessage | None = None
 
 
 class AdjustmentEvent(BaseModel):
@@ -258,10 +257,10 @@ class AdjustmentEvent(BaseModel):
 class LifeOSPlan(BaseModel):
     """Toàn bộ đầu ra khi hệ thống lập kế hoạch cho một mục tiêu."""
 
-    goal: Optional[Goal] = None
+    goal: Goal | None = None
     gaps: list[SkillGap] = Field(default_factory=list)
-    study_plan: Optional[StudyPlan] = None
-    first_week: Optional[WeeklySchedule] = None
+    study_plan: StudyPlan | None = None
+    first_week: WeeklySchedule | None = None
     weeks: list[WeeklySchedule] = Field(default_factory=list)
-    roundtable: Optional[Roundtable] = None
-    reflection: Optional[Reflection] = None
+    roundtable: Roundtable | None = None
+    reflection: Reflection | None = None

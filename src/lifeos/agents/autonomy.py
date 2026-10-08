@@ -128,9 +128,8 @@ class AutonomousAgent:
             return False
         if task.effort > self.state.available:
             return False
-        if task.skill and task.skill not in self.state.skills:
-            return False
-        return True
+        # Nhiệm vụ không ghi kỹ năng thì ai cũng nhận được; có ghi thì phải khớp.
+        return not task.skill or task.skill in self.state.skills
 
     def assess(self, task: Task) -> Bid | Refusal:
         """Tự đánh giá nhiệm vụ: trả về giá thầu, hoặc từ chối kèm lý do."""

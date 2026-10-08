@@ -6,6 +6,8 @@ Dùng để chạy thử toàn bộ pipeline và để viết test tích hợp.
 
 from __future__ import annotations
 
+from typing import TypeVar, cast
+
 from pydantic import BaseModel
 
 from .agents.schemas import (
@@ -28,6 +30,8 @@ from .models import (
 
 _REDUCE_MARKER = "GIẢM TẢI"
 
+TModel = TypeVar("TModel", bound=BaseModel)
+
 
 class DemoLLM:
     """Hiện thực giao diện LLM bằng dữ liệu mẫu, không gọi mạng."""
@@ -38,8 +42,8 @@ class DemoLLM:
     # --- giao diện LLM ---
 
     def structured(
-        self, system_prompt: str, user_prompt: str, schema: type[BaseModel]
-    ) -> BaseModel:
+        self, system_prompt: str, user_prompt: str, schema: type[TModel]
+    ) -> TModel:
         self.calls.append(schema.__name__)
         handler = {
             "GapList": self._gaps,
@@ -53,7 +57,9 @@ class DemoLLM:
         }.get(schema.__name__)
         if handler is None:
             raise NotImplementedError(f"DemoLLM chưa hỗ trợ schema: {schema.__name__}")
-        return handler(user_prompt)
+        # Tra theo tên schema lúc chạy nên không có cách nào để trình kiểm tra
+        # kiểu suy ra `TModel`; `cast` nói thẳng điều đó thay vì để `Any` lọt qua.
+        return cast(TModel, handler(user_prompt))
 
     def text(self, system_prompt: str, user_prompt: str) -> str:
         self.calls.append("text")

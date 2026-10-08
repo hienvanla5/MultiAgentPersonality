@@ -99,9 +99,8 @@ def main() -> int:
         print("  -> Day la nguyen nhan treo cua agent.")
 
     _step("6. Structured output (nhu agent dung)")
-    from pydantic import BaseModel
-
     import langchain_openai
+    from pydantic import BaseModel
 
     class Probe(BaseModel):
         ok: bool = True

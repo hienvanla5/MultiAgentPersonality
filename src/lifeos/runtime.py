@@ -26,8 +26,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 import time
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable, Iterable, Optional, Union
 from uuid import uuid4
 
 from .acl import ACLMessage, MessageBus, Performative
@@ -63,7 +63,7 @@ _STOP = object()
 #: `Bid`/`Refusal`, `None` (không trả lời), hoặc awaitable của những thứ đó.
 Handler = Callable[
     [AutonomousAgent, ACLMessage],
-    Union[None, str, Bid, Refusal, Awaitable[Optional[object]]],
+    str | Bid | Refusal | Awaitable[object | None] | None,
 ]
 
 
@@ -92,9 +92,9 @@ class _AgentSlot:
     """Một agent đã đăng ký: hộp thư, hàm xử lý, và task nền của nó."""
 
     agent: AutonomousAgent
-    handler: Optional[Handler] = None
+    handler: Handler | None = None
     inbox: asyncio.Queue = field(default_factory=asyncio.Queue)
-    worker: Optional[asyncio.Task] = None
+    worker: asyncio.Task | None = None
 
 
 class AgentRuntime:
@@ -111,7 +111,7 @@ class AgentRuntime:
 
     def __init__(
         self,
-        bus: Optional[MessageBus] = None,
+        bus: MessageBus | None = None,
         *,
         manager: str = MANAGER,
         timeout: float = DEFAULT_TIMEOUT,
@@ -132,7 +132,7 @@ class AgentRuntime:
     # --- đăng ký ---
 
     def register(
-        self, agent: AutonomousAgent, handler: Optional[Handler] = None
+        self, agent: AutonomousAgent, handler: Handler | None = None
     ) -> AutonomousAgent:
         """Đăng ký một agent. Gọi trước `start()`.
 
@@ -200,7 +200,7 @@ class AgentRuntime:
             slot.worker = None
         self._started = False
 
-    async def __aenter__(self) -> "AgentRuntime":
+    async def __aenter__(self) -> AgentRuntime:
         await self.start()
         return self
 
@@ -226,9 +226,9 @@ class AgentRuntime:
         content: str,
         *,
         performative: Performative = Performative.INFORM,
-        conversation_id: Optional[str] = None,
+        conversation_id: str | None = None,
         protocol: str = "lifeos",
-        metadata: Optional[dict] = None,
+        metadata: dict | None = None,
     ) -> ACLMessage:
         """Ghi tin vào bản ghi ACL rồi chuyển tới hộp thư người nhận.
 
@@ -296,7 +296,7 @@ class AgentRuntime:
 
     def _respond(self, slot: _AgentSlot, message: ACLMessage, outcome) -> None:
         """Ghi câu trả lời của agent vào bản ghi ACL và chuyển cho người gom."""
-        reply: Optional[ACLMessage] = None
+        reply: ACLMessage | None = None
 
         if isinstance(outcome, Bid):
             reply = self.bus.reply(
@@ -342,10 +342,10 @@ class AgentRuntime:
     async def negotiate(
         self,
         task: Task,
-        agents: Optional[Iterable[AutonomousAgent]] = None,
+        agents: Iterable[AutonomousAgent] | None = None,
         *,
-        timeout: Optional[float] = None,
-        conversation_id: Optional[str] = None,
+        timeout: float | None = None,
+        conversation_id: str | None = None,
     ) -> ContractNetResult:
         """Một vòng Contract Net, nhưng các agent phản hồi thật sự đồng thời.
 
@@ -486,9 +486,9 @@ class AgentRuntime:
     async def negotiate_all(
         self,
         tasks: Iterable[Task],
-        agents: Optional[Iterable[AutonomousAgent]] = None,
+        agents: Iterable[AutonomousAgent] | None = None,
         *,
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
     ) -> list[ContractNetResult]:
         """Giao lần lượt nhiều nhiệm vụ, ưu tiên việc gấp trước."""
         ordered = sorted(tasks, key=lambda t: (t.priority, t.id))
@@ -508,6 +508,6 @@ class AgentRuntime:
                 break
             try:
                 replies.append(await asyncio.wait_for(collector.get(), remaining))
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 break
         return replies

@@ -172,7 +172,7 @@ def render_saved_plans() -> None:
         f"#{s.id} · {s.goal_summary[:34]} · {s.progress_pct}%": s.id
         for s in summaries
     }
-    choice = st.sidebar.selectbox("Mở lại", ["—"] + list(labels))
+    choice = st.sidebar.selectbox("Mở lại", ["—", *labels])
     if choice == "—":
         return
     if not st.sidebar.button("Tải kế hoạch này", use_container_width=True):

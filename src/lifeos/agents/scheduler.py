@@ -38,7 +38,7 @@ def _normalize_tasks(
 ) -> list[ScheduleTask]:
     """Chuẩn hoá ngày/giờ, tránh khoảng bận, sắp theo trình tự thời gian."""
     cleaned: list[ScheduleTask] = []
-    for i, task in enumerate(tasks):
+    for task in tasks:
         day = task.day if task.day in WEEKDAY_NAMES else "Mon"
         duration = max(15, int(task.duration_min or 60))
         start = to_minutes(task.start)

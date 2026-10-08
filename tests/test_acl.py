@@ -9,7 +9,6 @@ from lifeos.acl import (
     Performative,
 )
 
-
 # --- ACLMessage ---
 
 

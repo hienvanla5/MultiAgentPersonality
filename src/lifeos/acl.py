@@ -3,16 +3,16 @@
 Khác với `Roundtable` (chỉ là bản ghi văn bản để hiển thị), module này mô hình
 hoá **hành vi giao tiếp**: mỗi tin nhắn có một `performative` cho biết người gửi
 đang *làm gì* (yêu cầu, thông báo, đề xuất, từ chối...), kèm định danh hội thoại
-để ghép cặp câu hỏi–trả lời.
+để ghép cặp câu hỏi - trả lời.
 
 Đây là nền tảng cho Contract Net Protocol ở `contract_net.py`.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import datetime
 from enum import Enum
-from typing import Iterable, Optional
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -52,8 +52,8 @@ class ACLMessage(BaseModel):
     content: str = ""
     conversation_id: str = Field(default_factory=lambda: uuid4().hex[:12])
     protocol: str = "lifeos"
-    reply_with: Optional[str] = None
-    in_reply_to: Optional[str] = None
+    reply_with: str | None = None
+    in_reply_to: str | None = None
     metadata: dict = Field(default_factory=dict)
     timestamp: datetime = Field(default_factory=datetime.now)
 
@@ -90,9 +90,9 @@ class MessageBus:
         receiver: str,
         content: str,
         *,
-        conversation_id: Optional[str] = None,
+        conversation_id: str | None = None,
         protocol: str = "lifeos",
-        metadata: Optional[dict] = None,
+        metadata: dict | None = None,
     ) -> ACLMessage:
         return self.send(
             ACLMessage(
@@ -113,8 +113,8 @@ class MessageBus:
         receiver: str,
         content: str,
         *,
-        conversation_id: Optional[str] = None,
-        in_reply_to: Optional[str] = None,
+        conversation_id: str | None = None,
+        in_reply_to: str | None = None,
     ) -> ACLMessage:
         return self.send(
             ACLMessage(
@@ -134,7 +134,7 @@ class MessageBus:
         performative: Performative,
         content: str,
         *,
-        metadata: Optional[dict] = None,
+        metadata: dict | None = None,
     ) -> ACLMessage:
         """Trả lời một tin nhắn, tự ghép hội thoại và `in_reply_to`."""
         return self.send(
@@ -158,7 +158,7 @@ class MessageBus:
         performative: Performative,
         content: str,
         *,
-        metadata: Optional[dict] = None,
+        metadata: dict | None = None,
     ) -> ACLMessage:
         """Gửi tin **xuôi chiều** trong cùng hội thoại.
 
@@ -186,9 +186,9 @@ class MessageBus:
         content: str,
         *,
         performative: Performative = Performative.REQUEST,
-        conversation_id: Optional[str] = None,
+        conversation_id: str | None = None,
         protocol: str = "lifeos",
-        metadata: Optional[dict] = None,
+        metadata: dict | None = None,
     ) -> list[ACLMessage]:
         """Gửi cùng một nội dung cho nhiều agent (dùng khi mời bỏ thầu)."""
         cid = conversation_id or uuid4().hex[:12]
@@ -236,7 +236,7 @@ class MessageBus:
             return []
         return [m for m in self._messages if m.in_reply_to == token]
 
-    def transcript(self, conversation_id: Optional[str] = None) -> str:
+    def transcript(self, conversation_id: str | None = None) -> str:
         """Bản ghi dạng văn bản, dùng để đưa vào prompt hoặc hiển thị."""
         source = (
             self.conversation(conversation_id)

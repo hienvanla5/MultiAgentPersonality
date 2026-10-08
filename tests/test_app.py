@@ -95,7 +95,7 @@ def test_app_offers_ics_download():
     app.button[0].click().run()
     assert not app.exception
 
-    downloads = [d for d in app.get("download_button")]
+    downloads = list(app.get("download_button"))
     assert downloads, "phải có nút tải lịch .ics"
     assert downloads[0].label.startswith("⬇️ Tải lịch .ics")
 
@@ -309,7 +309,7 @@ def test_app_reloaded_plan_keeps_review_progress(app_store):
     fresh.run()
     box = _saved_plan_box(fresh)
     box.select(next(o for o in box.options if o.startswith(f"#{plan_id}"))).run()
-    [b for b in fresh.sidebar.button if "Tải kế hoạch này" in b.label][0].click().run()
+    next(b for b in fresh.sidebar.button if "Tải kế hoạch này" in b.label).click().run()
 
     cards = {
         c.topic: c.repetitions

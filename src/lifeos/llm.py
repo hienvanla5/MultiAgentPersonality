@@ -17,12 +17,17 @@ from __future__ import annotations
 import json
 import re
 from functools import lru_cache
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, TypeVar, runtime_checkable
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
 
 from .config import get_settings
+
+#: Kiểu schema mà `structured()` nhận và trả về. Ràng buộc `BaseModel` để bên
+#: gọi khai báo `structured(..., Quiz)` và nhận lại đúng `Quiz`, thay vì
+#: `BaseModel` chung chung rồi phải tự kiểm tra kiểu ở mọi call site.
+TModel = TypeVar("TModel", bound=BaseModel)
 
 
 @runtime_checkable
@@ -30,8 +35,8 @@ class LLM(Protocol):
     """Giao diện tối thiểu mà mọi agent cần."""
 
     def structured(
-        self, system_prompt: str, user_prompt: str, schema: type[BaseModel]
-    ) -> BaseModel: ...
+        self, system_prompt: str, user_prompt: str, schema: type[TModel]
+    ) -> TModel: ...
 
     def text(self, system_prompt: str, user_prompt: str) -> str: ...
 
@@ -157,8 +162,8 @@ class LangChainLLM:
         return None
 
     def structured(
-        self, system_prompt: str, user_prompt: str, schema: type[BaseModel]
-    ) -> BaseModel:
+        self, system_prompt: str, user_prompt: str, schema: type[TModel]
+    ) -> TModel:
         errors: list[str] = []
 
         if self._native_structured_ok is not False:

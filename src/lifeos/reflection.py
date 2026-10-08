@@ -17,7 +17,7 @@ phải **tự hạ mức tải** thay vì lặp lại y nguyên một kế hoạ
 
 from __future__ import annotations
 
-from typing import Iterable, Optional
+from collections.abc import Iterable
 
 from .llm import LLM
 from .memory import VectorMemory
@@ -40,7 +40,7 @@ MIN_PLANS_FOR_ADAPTATION = 1
 
 
 def recall(
-    memory: Optional[VectorMemory], query: str, k: int = 3
+    memory: VectorMemory | None, query: str, k: int = 3
 ) -> list[Lesson]:
     """Tìm lại các kế hoạch trước tương tự mục tiêu hiện tại."""
     if memory is None or not query.strip():
@@ -131,11 +131,11 @@ def suggested_load_factor(plans: Iterable[LifeOSPlan]) -> float:
 
 
 def reflect(
-    llm: Optional[LLM],
-    memory: Optional[VectorMemory],
+    llm: LLM | None,
+    memory: VectorMemory | None,
     profile: UserProfile,
     *,
-    past_plans: Optional[Iterable[LifeOSPlan]] = None,
+    past_plans: Iterable[LifeOSPlan] | None = None,
     tone: str = "",
     k: int = 3,
 ) -> Reflection:
@@ -152,7 +152,7 @@ def reflect(
     if lessons and llm is not None:
         from .agents.base import say
 
-        transcript = "\n".join(f"- [{l.goal}] {l.text}" for l in lessons)
+        transcript = "\n".join(f"- [{item.goal}] {item.text}" for item in lessons)
         prompt = (
             f"Mục tiêu mới: {query}\n\n"
             f"Kinh nghiệm từ các kế hoạch trước:\n{transcript}\n\n"
@@ -172,8 +172,8 @@ def reflect(
 
 
 def remember_plan(
-    memory: Optional[VectorMemory], plan: LifeOSPlan, extra: Optional[dict] = None
-) -> Optional[str]:
+    memory: VectorMemory | None, plan: LifeOSPlan, extra: dict | None = None
+) -> str | None:
     """Ghi kế hoạch vào bộ nhớ ngữ nghĩa kèm số liệu kết quả.
 
     Khác `save_node` (chỉ ghi nội dung kế hoạch), hàm này ghi kèm **kết quả thực
