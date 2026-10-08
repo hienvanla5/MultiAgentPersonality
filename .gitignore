@@ -10,6 +10,12 @@ secrets/
 credentials.json
 .streamlit/secrets.toml
 
+# Token OAuth của Google Calendar: chứa refresh token, tức quyền truy cập lịch
+# về sau mà không cần đăng nhập lại. Mặc định đã nằm trong data/ (bị chặn bên
+# dưới), thêm ở đây để chặn cả khi người dùng đổi GOOGLE_TOKEN_PATH.
+google_token.json
+*google*token*.json
+
 # ============================================================
 # Dữ liệu sinh ra khi chạy (không phải mã nguồn)
 # ============================================================

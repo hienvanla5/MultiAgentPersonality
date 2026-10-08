@@ -16,6 +16,7 @@ from lifeos.agents import team, tutor
 from lifeos.agents.autonomy import AutonomousAgent, Bid, Task
 from lifeos.agents.contract_net import ContractNet, summarize
 from lifeos.clarify import clarifying_questions
+from lifeos.config import get_settings
 from lifeos.demo import DemoLLM
 from lifeos.graph import NODE_LABELS, iter_adjust, iter_plan
 from lifeos.llm import get_llm, has_api_key
@@ -28,6 +29,12 @@ from lifeos.models import (
     UserProfile,
 )
 from lifeos.tools.calendar import write_ics
+from lifeos.tools.google_calendar import (
+    GoogleCalendarError,
+    build_client,
+    config_from_settings,
+    events_from_weeks,
+)
 
 TASK_TYPE_LABEL = {
     "study": "Học",
@@ -347,6 +354,63 @@ async def _demo_async_runtime(delay: float = 0.3) -> None:
     )
 
 
+def print_google_calendar(plan, *, mode: str) -> None:
+    """Kiểm tra cấu hình OAuth, xem trước payload, hoặc đồng bộ thật."""
+    print("\n[14] GOOGLE CALENDAR (OAuth 2.0)")
+    settings = get_settings()
+    config = config_from_settings(settings)
+
+    print(
+        "  Client ID: "
+        + ("đã cấu hình" if config.client_id else "CHƯA cấu hình (xem .env.example)")
+    )
+    print(f"  Redirect URI: {config.redirect_uri}")
+    print(f"  Quyền xin: {', '.join(config.scopes)}")
+    print(
+        f"  File token: {config.token_file} "
+        f"({'đã có' if config.token_file.exists() else 'chưa có'})"
+    )
+
+    if mode == "status":
+        print(
+            "\n  Dùng --gcal dry-run để xem trước payload, "
+            "--gcal sync để đồng bộ thật."
+        )
+        return
+
+    events = events_from_weeks(plan.weeks)
+    print(f"\n  Lịch hiện tại có {len(events)} buổi học.")
+
+    if mode == "dry-run":
+        for event in events[:3]:
+            private = event["extendedProperties"]["private"]
+            print(
+                f"    - {event['summary']} | {event['start']['dateTime']} | "
+                f"{private['lifeos_key']}"
+            )
+        if len(events) > 3:
+            print(f"    ... và {len(events) - 3} buổi nữa")
+        print("  (chạy khô: không gọi mạng, không cần credentials)")
+        return
+
+    try:
+        client = build_client(
+            config,
+            calendar_id=settings.google_calendar_id,
+            time_zone=settings.google_time_zone,
+        )
+    except GoogleCalendarError as exc:
+        print(f"\n  Không kết nối được: {exc}")
+        return
+
+    report = client.sync_weeks(plan.weeks)
+    print(f"\n  {report.summary()}")
+    for error in report.errors:
+        print(f"    ! {error}")
+    if report.ok:
+        print("  Chạy lại lệnh này sẽ không tạo sự kiện trùng.")
+
+
 def print_acl(goal: str, llm=None) -> None:
     """In bản ghi tin nhắn ACL của một phiên thương lượng."""
     print("\n[11] GIAO THỨC ACL (bản ghi tin nhắn)")
@@ -471,6 +535,12 @@ def main() -> None:
         action="store_true",
         help="Chạy agent như tiến trình nền thật (asyncio) và đo tính đồng thời",
     )
+    parser.add_argument(
+        "--gcal",
+        choices=["status", "dry-run", "sync"],
+        default=None,
+        help="Google Calendar: kiểm tra cấu hình, xem trước payload, hoặc đồng bộ thật",
+    )
     args = parser.parse_args()
 
     if args.list_plans:
@@ -538,6 +608,9 @@ def main() -> None:
 
     if args.run_async:
         print_async_runtime()
+
+    if args.gcal:
+        print_google_calendar(plan, mode=args.gcal)
 
     if args.adapt:
         print_reflection(persistence.default_store())

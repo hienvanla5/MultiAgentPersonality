@@ -8,14 +8,15 @@ Kịch bản demo: *"Chuyển từ hành chính sang Data Analyst trong 6 tháng
 full-time."*
 
 Không chỉ dừng ở lập kế hoạch: hệ thống còn sinh **lịch nhiều tuần**, **theo dõi
-tiến độ**, **ôn tập cách quãng**, **kiểm tra hiểu biết**, và **xuất `.ics`** để
-đưa vào Google Calendar.
+tiến độ**, **ôn tập cách quãng**, **kiểm tra hiểu biết**, và đưa lịch vào Google
+Calendar — hoặc xuất `.ics`, hoặc **đồng bộ thẳng qua OAuth 2.0**.
 
 Ở tầng đa tác tử, các agent **tự trị** (có trạng thái nội bộ và quyền từ chối),
-**thương lượng** phân việc theo Contract Net Protocol, **tự lập nhóm** theo kỹ
-năng cần có, chạy **song song** khi độc lập, và **học từ kết quả thật** để điều
-chỉnh kế hoạch sau. Xem [mục 7](#7-đối-chiếu-8-đặc-tính-của-hệ-đa-tác-tử) để biết
-cái gì đã có sẵn và cái gì mới được bổ sung.
+**thương lượng nhiều vòng** phân việc theo Contract Net Protocol, **tự lập nhóm**
+theo kỹ năng cần có, **chạy nền thật** như những tiến trình độc lập gửi tin cho
+nhau, và **học từ kết quả thật** để điều chỉnh kế hoạch sau. Xem
+[mục 7](#7-đối-chiếu-8-đặc-tính-của-hệ-đa-tác-tử) để biết cái gì đã có sẵn và cái
+gì mới được bổ sung.
 
 ---
 
@@ -195,6 +196,51 @@ Ba agent cùng xử lý một việc tốn 0,3 giây. In ra thời gian thật �
 chạy tuần tự sẽ là ~0,9 giây, còn ở đây gần bằng agent chậm nhất. Kèm theo là
 bản ghi ACL và thống kê runtime (số tin đã xử lý, số lỗi, số lần hết hạn chờ).
 
+### Đồng bộ thẳng lên Google Calendar
+
+Phần này cần credentials của chính bạn. Ba bước:
+
+**1. Tạo OAuth client ID** tại Google Cloud Console → APIs & Services →
+Credentials → Create credentials → OAuth client ID → **Desktop app**. Thêm
+`http://localhost:8765/` vào danh sách redirect URI.
+
+**2. Điền vào `.env`** (xem `.env.example`):
+
+```dotenv
+GOOGLE_CLIENT_ID=....apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=...
+```
+
+**3. Chạy thử rồi đồng bộ:**
+
+```powershell
+# Kiểm tra cấu hình và trạng thái token (không gọi mạng)
+uv run python scripts/demo_run.py --gcal status --skip-adjust
+
+# Xem trước payload sẽ gửi lên (không gọi mạng, không cần credentials)
+uv run python scripts/demo_run.py --gcal dry-run --skip-adjust
+
+# Đồng bộ thật — lần đầu sẽ mở trình duyệt để xin quyền
+uv run python scripts/demo_run.py --gcal sync --skip-adjust
+```
+
+Trong giao diện, mục này nằm trong expander **Đồng bộ thẳng lên Google Calendar**
+ngay dưới nút tải `.ics`.
+
+Vài điểm đáng lưu ý về cách làm này:
+
+- **Không thêm thư viện.** Luồng authorization code + PKCE cho ứng dụng cài đặt
+  chỉ cần `urllib` và `http.server` của thư viện chuẩn, nên `uv sync` không phải
+  kéo thêm vài chục MB phụ thuộc của Google.
+- **Chỉ xin quyền trên sự kiện** (`calendar.events`), không xin đọc toàn bộ lịch.
+  Đồng bộ lịch học không cần biết bạn có những cuộc hẹn nào khác.
+- **Đồng bộ idempotent.** Mỗi buổi học mang một khoá `lifeos_key` trong
+  `extendedProperties.private`. Chạy lại lệnh đồng bộ sẽ cập nhật đúng sự kiện
+  cũ, không tạo trùng.
+- **Token là mật khẩu.** File `data/google_token.json` chứa refresh token, tức
+  quyền truy cập lịch về sau mà không cần đăng nhập lại. Nó nằm trong `data/`
+  (đã bị `.gitignore` chặn) và được ghi với quyền 600 trên POSIX.
+
 ---
 
 ## 4. Cấu hình LLM
@@ -209,6 +255,12 @@ Mọi API tương thích chuẩn chat-completions đều dùng được — ch�
 | `LLM_TEMPERATURE` | Độ sáng tạo | `0.4` |
 | `LLM_TIMEOUT` | Timeout mỗi lời gọi (giây) | `120` |
 | `LLM_MAX_RETRIES` | Số lần thử lại khi lỗi | `0` |
+| `GOOGLE_CLIENT_ID` | OAuth client ID (tuỳ chọn, cho Google Calendar) | — |
+| `GOOGLE_CLIENT_SECRET` | OAuth client secret (tuỳ chọn) | — |
+| `GOOGLE_REDIRECT_PORT` | Cổng nhận chuyển hướng OAuth | `8765` |
+| `GOOGLE_TOKEN_PATH` | Nơi lưu token | `data/google_token.json` |
+| `GOOGLE_CALENDAR_ID` | Lịch nhận sự kiện | `primary` |
+| `GOOGLE_TIME_ZONE` | Múi giờ gửi lên Google | `Asia/Ho_Chi_Minh` |
 
 ### Chọn model: nguyên nhân "treo" phổ biến nhất
 
@@ -281,7 +333,8 @@ src/lifeos/
 │   ├── store.py         # SQLite: kế hoạch, sự kiện điều chỉnh, thẻ ôn tập
 │   └── vector.py        # Chroma: truy xuất ngữ nghĩa
 └── tools/
-    └── calendar.py      # parse/ghi ICS, phát hiện & dịch khỏi khoảng bận
+    ├── calendar.py      # parse/ghi ICS, phát hiện & dịch khỏi khoảng bận
+    └── google_calendar.py  # OAuth 2.0 + đồng bộ thẳng lên Google Calendar
 ```
 
 ---
@@ -301,6 +354,9 @@ uv run pytest -q
 - `test_runtime.py` — agent chạy nền thật: đồng thời thật (đo bằng thời gian),
   agent chậm không chặn người khác, agent lỗi không làm sập runtime, tắt máy có
   chặn thời gian
+- `test_google_calendar.py` — PKCE, URL uỷ quyền, làm mới token, lưu token, hàm
+  chuyển lịch thành sự kiện, đồng bộ idempotent, và server nhận chuyển hướng
+  trên localhost. Chạy **không cần mạng và không cần credentials thật**
 - `test_team.py` — phân rã mục tiêu, nhóm co giãn theo kỹ năng cần có
 - `test_llm_decomposition.py` — phân rã bằng LLM: dùng kết quả LLM, chuẩn hoá
   slug tiếng Việt, kẹp giá trị số, và quay về quy tắc khi LLM lỗi
@@ -423,7 +479,10 @@ tại chỗ** (có test kiểm chứng).
 - Giao diện và nội dung mẫu bằng **tiếng Việt**.
 - Lịch nhiều tuần sinh theo **công thức** cho tuần 2 trở đi: đúng ngân sách giờ
   và thứ tự module, nhưng không "thông minh" như tuần 1 do LLM lập.
-- Xuất `.ics` được, nhưng **chưa có OAuth** Google Calendar (import thủ công).
+- Xuất `.ics` được, và **đồng bộ thẳng lên Google Calendar** qua OAuth 2.0. Phần
+  này đã kiểm thử đầy đủ ở mức đơn vị nhưng **chưa chạy thật với Google** trong
+  quá trình phát triển (cần credentials của người dùng), nên hãy coi là "đã viết
+  xong, chưa xác minh đầu-cuối".
 - `tools/search.py` còn là stub.
 - Quiz chấm theo **đáp án cố định** do LLM sinh, chưa kiểm chứng lại tính đúng
   của đáp án đó.
@@ -449,8 +508,8 @@ tại chỗ** (có test kiểm chứng).
 - LLM có thể đề xuất **kỹ năng mà không agent nào có**; hệ thống giữ nguyên
   nhiệm vụ đó và báo "không ai nhận" thay vì tự gán bừa cho một agent.
 
-**Hướng mở rộng:** gắn Google Calendar qua OAuth, agent chạy nền thật sự, liên
-minh agent cho việc lớn, và bộ test eval lớn hơn.
+**Hướng mở rộng:** liên minh agent cho việc lớn, hàng đợi tin bền (message
+broker), `tools/search.py` thật, và bộ test eval lớn hơn.
 
 ---
 
