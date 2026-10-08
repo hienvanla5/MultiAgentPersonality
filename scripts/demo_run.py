@@ -6,17 +6,20 @@ Mặc định dùng LLM giả (offline). Thêm --real để gọi API thật (c�
 from __future__ import annotations
 
 import argparse
+import asyncio
+import time
 from datetime import date
 
 from lifeos import persistence, progress, reflection, srs
 from lifeos.acl import MessageBus
 from lifeos.agents import team, tutor
-from lifeos.agents.autonomy import AutonomousAgent, Task
+from lifeos.agents.autonomy import AutonomousAgent, Bid, Task
 from lifeos.agents.contract_net import ContractNet, summarize
 from lifeos.clarify import clarifying_questions
 from lifeos.demo import DemoLLM
 from lifeos.graph import NODE_LABELS, iter_adjust, iter_plan
 from lifeos.llm import get_llm, has_api_key
+from lifeos.runtime import AgentRuntime
 from lifeos.models import (
     CommunicationStyle,
     EnergyWindow,
@@ -279,6 +282,71 @@ def print_negotiation() -> None:
         print(f"    {line}")
 
 
+def print_async_runtime() -> None:
+    """Cho các agent chạy nền thật và đo tính đồng thời."""
+    print("\n[13] RUNTIME AGENT CHẠY NỀN THẬT (asyncio)")
+    asyncio.run(_demo_async_runtime())
+
+
+async def _demo_async_runtime(delay: float = 0.3) -> None:
+    """Ba agent cùng xử lý một việc có độ trễ, để so thời gian thật."""
+
+    async def handler(agent, message):
+        # Giả lập việc tốn thời gian (gọi LLM, đọc đĩa...).
+        await asyncio.sleep(delay)
+        return Bid(
+            agent=agent.key,
+            task_id=str(message.metadata.get("task_id", "")),
+            confidence=0.9,
+            cost=0.2,
+            reason=f"xử lý xong sau {delay}s",
+        )
+
+    runtime = AgentRuntime(timeout=5.0)
+    keys = [("career", "gap-analysis"), ("tutor", "curriculum"),
+            ("scheduler", "scheduling")]
+    for key, skill in keys:
+        runtime.register(AutonomousAgent(key, skills=[skill]), handler=handler)
+
+    print(f"  3 agent, mỗi người xử lý mất {delay:.2f}s.")
+    print("  Nếu chạy tuần tự sẽ là "
+          f"~{len(keys) * delay:.2f}s; chạy nền thật thì gần bằng agent chậm nhất.\n")
+
+    async with runtime:
+        started = time.perf_counter()
+        results = await asyncio.gather(
+            *[
+                runtime.negotiate(
+                    Task(
+                        id=f"viec-{key}",
+                        description=f"việc cho {key}",
+                        skill=skill,
+                        effort=0.2,
+                    ),
+                    [runtime.agent(key)],
+                )
+                for key, skill in keys
+            ]
+        )
+        elapsed = time.perf_counter() - started
+
+    for result in results:
+        mark = "✓" if result.assigned else "✗"
+        print(f"    {mark} {result.task.id:<16} → {result.awarded_to}")
+
+    print(f"\n  Tổng thời gian thật: {elapsed:.3f}s")
+    print(f"  Thống kê runtime: {runtime.stats.summary()}")
+
+    print("\n  Bản ghi ACL của cuộc thương lượng đầu tiên:")
+    for message in runtime.bus.conversation(results[0].conversation_id):
+        print(f"    {message.render()}")
+
+    print(
+        "\n  Mỗi agent là một asyncio.Task có hộp thư riêng; bộ điều phối gửi tin "
+        "rồi chờ,\n  chứ không gọi lần lượt từng agent."
+    )
+
+
 def print_acl(goal: str, llm=None) -> None:
     """In bản ghi tin nhắn ACL của một phiên thương lượng."""
     print("\n[11] GIAO THỨC ACL (bản ghi tin nhắn)")
@@ -397,6 +465,12 @@ def main() -> None:
         action="store_true",
         help="In một cuộc thương lượng nhiều vòng khi năng lực nhóm bị chặt",
     )
+    parser.add_argument(
+        "--async",
+        dest="run_async",
+        action="store_true",
+        help="Chạy agent như tiến trình nền thật (asyncio) và đo tính đồng thời",
+    )
     args = parser.parse_args()
 
     if args.list_plans:
@@ -461,6 +535,9 @@ def main() -> None:
 
     if args.negotiate:
         print_negotiation()
+
+    if args.run_async:
+        print_async_runtime()
 
     if args.adapt:
         print_reflection(persistence.default_store())

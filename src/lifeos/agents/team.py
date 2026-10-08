@@ -367,3 +367,38 @@ def self_organize(
         excluded=excluded,
         results=results,
     )
+
+
+async def self_organize_async(
+    goal: str,
+    *,
+    llm: LLM | None = None,
+    extra_agents: dict[str, list[str]] | None = None,
+    timeout: float | None = None,
+) -> TeamPlan:
+    """Như `self_organize` nhưng các agent chạy nền thật sự.
+
+    Phân rã và lập nhóm vẫn là bước tuần tự (phải biết cần kỹ năng gì mới lập
+    được nhóm), nhưng phần thương lượng thì các agent nhận tin qua hộp thư và
+    phản hồi đồng thời, thay vì bộ điều phối gọi lần lượt từng người.
+
+    Import `runtime` ở trong hàm để tránh vòng import: `runtime` cần
+    `contract_net`, mà `contract_net` lại nằm trong gói agent.
+    """
+    from ..runtime import AgentRuntime
+
+    breakdown = decompose(goal, llm=llm)
+    members, excluded = build_roster(breakdown, extra_agents=extra_agents)
+
+    runtime = AgentRuntime(timeout=5.0 if timeout is None else timeout)
+    for agent in members:
+        runtime.register(agent)
+    async with runtime:
+        results = await runtime.negotiate_all(breakdown.tasks, members)
+
+    return TeamPlan(
+        breakdown=breakdown,
+        members=[agent.key for agent in members],
+        excluded=excluded,
+        results=results,
+    )

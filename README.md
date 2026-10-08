@@ -185,6 +185,16 @@ lộ ra hành vi mà kịch bản thường không thấy: cả nhóm từ chố
 phối công bố lại với phạm vi chia nhỏ ở vòng 2, và phần công sức chưa ai nhận
 được ghi rõ thay vì im lặng coi như đã giao xong.
 
+**Xem agent chạy nền thật:**
+
+```powershell
+uv run python scripts/demo_run.py --async --skip-adjust
+```
+
+Ba agent cùng xử lý một việc tốn 0,3 giây. In ra thời gian thật để đối chiếu:
+chạy tuần tự sẽ là ~0,9 giây, còn ở đây gần bằng agent chậm nhất. Kèm theo là
+bản ghi ACL và thống kê runtime (số tin đã xử lý, số lỗi, số lần hết hạn chờ).
+
 ---
 
 ## 4. Cấu hình LLM
@@ -252,6 +262,7 @@ src/lifeos/
 ├── demo.py              # LLM giả cho demo/test offline
 ├── graph.py             # LangGraph: build_graph + adjust_graph
 ├── acl.py               # giao thức tin nhắn giữa agent (performative + bus)
+├── runtime.py           # agent chạy nền thật (asyncio) + hộp thư riêng
 ├── parallel.py          # chạy song song các bước độc lập
 ├── progress.py          # theo dõi tiến độ trên lịch nhiều tuần
 ├── persistence.py       # lưu/khôi phục/liệt kê kế hoạch + thẻ ôn tập
@@ -287,6 +298,9 @@ uv run pytest -q
 - `test_contract_net.py` — đủ 4 pha thương lượng, trao thầu tất định, hết năng lực
 - `test_multi_round.py` — công bố lại khi công sức vượt năng lực, chia nhỏ phạm
   vi, ghi rõ phần chưa ai nhận, không bao giờ giao quá tải
+- `test_runtime.py` — agent chạy nền thật: đồng thời thật (đo bằng thời gian),
+  agent chậm không chặn người khác, agent lỗi không làm sập runtime, tắt máy có
+  chặn thời gian
 - `test_team.py` — phân rã mục tiêu, nhóm co giãn theo kỹ năng cần có
 - `test_llm_decomposition.py` — phân rã bằng LLM: dùng kết quả LLM, chuẩn hoá
   slug tiếng Việt, kẹp giá trị số, và quay về quy tắc khi LLM lỗi
@@ -328,7 +342,7 @@ này. Cột "trước" ghi trung thực cả những chỗ còn thiếu.
 | 4 | **Chuyên môn hóa** | ✅ Đã có — 6 persona, mỗi agent một module riêng | ✅ Giữ nguyên, nay kèm khai báo kỹ năng máy đọc được (`AGENT_SKILLS`) | `personas/registry.py` |
 | 5 | **Thương lượng** (Negotiation) | ❌ **Không có gì** — phản biện nói "quá tải" thì đồ thị tự giảm tải, không ai thương lượng | ✅ **Contract Net Protocol** đủ 4 pha, **công bố lại nhiều vòng** khi công sức vượt năng lực | `agents/contract_net.py` |
 | 6 | **Tự tổ chức** (Self-Organization) | ❌ Thứ tự node cố định trong `StateGraph` | ✅ Nhóm **co giãn theo việc**: ai không có nhiệm vụ phù hợp thì không được mời; thêm agent mới chỉ cần khai báo kỹ năng | `agents/team.py` |
-| 7 | **Mở rộng & song song** | ❌ Chạy tuần tự hoàn toàn | ✅ `map_parallel` chạy song song hội đồng persona và bước bỏ thầu | `parallel.py` |
+| 7 | **Mở rộng & song song** | ❌ Chạy tuần tự hoàn toàn | ✅ Hai mức: `map_parallel` cho các bước độc lập, và **runtime asyncio** cho agent chạy nền thật với hộp thư riêng | `parallel.py`, `runtime.py` |
 | 8 | **Học liên tục** | ⚠️ Bộ nhớ **chỉ ghi** — `memory.search()` chưa bao giờ được gọi trong luồng thật | ✅ **Suy ngẫm** trước khi lập kế hoạch: đọc lại ký ức + tỉ lệ hoàn thành thật để tự hạ mức tải | `reflection.py` |
 
 Hai điểm đáng nói về tính trung thực của bảng này:
@@ -413,9 +427,13 @@ tại chỗ** (có test kiểm chứng).
 - `tools/search.py` còn là stub.
 - Quiz chấm theo **đáp án cố định** do LLM sinh, chưa kiểm chứng lại tính đúng
   của đáp án đó.
-- **Chưa có giao tiếp giữa các agent theo thời gian thực.** `MessageBus` ghi lại
-  một phiên thương lượng đã kết thúc; các agent không chạy như tiến trình nền
-  độc lập gửi tin cho nhau.
+- **Chưa có giao tiếp giữa các agent theo thời gian thực.** `runtime.py` cho các
+  agent chạy nền thật và gửi tin qua hộp thư trong **một tiến trình**, nhưng
+  chúng chưa phải tiến trình/máy riêng, và chưa có hàng đợi bền (message broker)
+  nên tin nhắn không sống qua lần khởi động lại. Giao diện Streamlit vẫn dùng
+  đường đồng bộ (`self_organize`) vì `asyncio.run` trong vòng chạy script của
+  Streamlit dễ xung đột với vòng lặp sẵn có; đường bất đồng bộ dùng qua
+  `self_organize_async` hoặc `demo_run.py --async`.
 - **Thương lượng nhiều vòng chỉ nới được công sức**, không nới kỹ năng: nếu
   không agent nào có chuyên môn phù hợp thì dừng ngay ở vòng 1 thay vì công bố
   lại vô ích. Việc chưa ai nhận được ghi rõ thành `remaining_effort`, nhưng hệ
