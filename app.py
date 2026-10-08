@@ -142,6 +142,51 @@ def render_sidebar() -> tuple[UserProfile, bool, int, bool]:
     return profile, offline, weeks, adapt
 
 
+def render_saved_plans() -> None:
+    """Cho phép mở lại kế hoạch đã lưu, kèm `plan_id`.
+
+    Không có bước này thì thẻ ôn tập tuy đã nằm trong SQLite nhưng **không có
+    đường quay lại**: `plan_id` chỉ sống trong `session_state`, nên đóng trình
+    duyệt là mất, và lần sau bấm "Lập kế hoạch" sẽ sinh một `plan_id` mới khiến
+    thẻ cũ thành mồ côi.
+    """
+    st.sidebar.divider()
+    st.sidebar.subheader("Kế hoạch đã lưu")
+    try:
+        summaries = persistence.list_plans(persistence.default_store(), limit=10)
+    except Exception as exc:  # noqa: BLE001 - DB lỗi không chặn phần còn lại
+        st.sidebar.caption(f"Không đọc được SQLite: {exc}")
+        return
+
+    if not summaries:
+        st.sidebar.caption("Chưa có kế hoạch nào. Bấm **Lập kế hoạch** để tạo.")
+        return
+
+    labels = {
+        f"#{s.id} · {s.goal_summary[:34]} · {s.progress_pct}%": s.id
+        for s in summaries
+    }
+    choice = st.sidebar.selectbox("Mở lại", ["—"] + list(labels))
+    if choice == "—":
+        return
+    if not st.sidebar.button("Tải kế hoạch này", use_container_width=True):
+        return
+
+    try:
+        plan = persistence.load_plan(persistence.default_store(), labels[choice])
+    except Exception as exc:  # noqa: BLE001 - hiển thị lỗi cho người dùng
+        st.sidebar.error(f"Không đọc được kế hoạch: {exc}")
+        return
+
+    if plan is None:
+        st.sidebar.error("Không tìm thấy kế hoạch này.")
+        return
+
+    st.session_state.plan = plan
+    st.session_state.plan_id = labels[choice]
+    st.sidebar.success("Đã tải kế hoạch. Thẻ ôn tập cũ được giữ nguyên.")
+
+
 def llm_for(offline: bool):
     if offline:
         if "demo_llm" not in st.session_state:
@@ -339,16 +384,47 @@ def render_progress(plan) -> None:
         )
 
 
-def render_review(plan) -> None:
+def _review_cards(plan, plan_id, today):
+    """Đọc thẻ ôn tập đã lưu; chưa có thì sinh từ lộ trình rồi lưu lại.
+
+    Trả về `(cards, store)`. `store` là `None` khi chưa có `plan_id` (kế hoạch
+    chưa được lưu) — khi đó thẻ chỉ sống trong phiên làm việc như trước.
+    """
+    if plan_id is None:
+        return srs.cards_from_plan(plan, today=today), None
+
+    store = persistence.default_store()
+    cards = persistence.load_review_cards(store, plan_id)
+    if not cards:
+        cards = srs.cards_from_plan(plan, today=today)
+        if cards:
+            persistence.save_review_cards(store, plan_id, cards)
+    return cards, store
+
+
+def render_review(plan, plan_id) -> None:
     st.divider()
     st.subheader("8. Ôn tập cách quãng — chống quên 🔁")
     today = date.today()
-    cards = srs.cards_from_plan(plan, today=today)
+
+    try:
+        cards, store = _review_cards(plan, plan_id, today)
+    except Exception as exc:  # noqa: BLE001 - DB lỗi không chặn phần còn lại
+        st.warning(f"Không đọc được thẻ ôn tập từ SQLite ({exc}). Dùng bản tạm.")
+        cards, store = srs.cards_from_plan(plan, today=today), None
+
     if not cards:
         st.info("Lộ trình chưa có module nên chưa tạo được thẻ ôn tập.")
         return
 
     st.write(srs.summarize(cards, today=today))
+    if store is not None:
+        st.caption(
+            f"Thẻ được lưu trong SQLite (kế hoạch #{plan_id}) — mở lại vẫn còn."
+        )
+    else:
+        st.caption("Chưa lưu được kế hoạch nên thẻ chỉ tồn tại trong phiên này.")
+
     st.dataframe(
         [
             {
@@ -375,12 +451,20 @@ def render_review(plan) -> None:
         "Bạn nhớ được bao nhiêu? (0 = quên hẳn, 5 = nhớ hoàn hảo)", 0, 5, 4
     )
     if st.button("Ghi nhận lượt ôn", use_container_width=True):
-        card = srs.review(due[0], quality, today=today)
-        st.session_state.plan = plan
-        st.success(
-            f"Lần ôn tới sau {card.interval_days} ngày "
-            f"({card.due_date.isoformat()}), hệ số dễ {card.ease:.2f}."
-        )
+        if store is not None:
+            card = persistence.review_and_save(
+                store, plan_id, due[0].topic, quality, today=today
+            )
+        else:
+            card = srs.review(due[0], quality, today=today)
+
+        if card is None:
+            st.error("Không tìm thấy thẻ này trong SQLite để cập nhật.")
+        else:
+            st.success(
+                f"Lần ôn tới sau {card.interval_days} ngày "
+                f"({card.due_date.isoformat()}), hệ số dễ {card.ease:.2f}."
+            )
 
 
 def render_quiz(plan, profile: UserProfile, offline: bool) -> None:
@@ -589,6 +673,7 @@ def render_adjust(profile: UserProfile, offline: bool, plan) -> None:
 
 def main() -> None:
     profile, offline, weeks, adapt = render_sidebar()
+    render_saved_plans()
 
     st.title("Life OS")
     st.caption(
@@ -632,6 +717,14 @@ def main() -> None:
                 status.update(label="Đã lập xong kế hoạch", state="complete")
             if plan_result is not None:
                 st.session_state.plan = plan_result
+                # Lưu kế hoạch để có `plan_id` — thẻ ôn tập cần khoá này mới
+                # ghi được xuống SQLite. Lỗi DB không được chặn lập kế hoạch.
+                try:
+                    st.session_state.plan_id = persistence.save_plan(
+                        persistence.default_store(), plan_result
+                    )
+                except Exception:  # noqa: BLE001 - chỉ mất tính bền vững
+                    st.session_state.plan_id = None
                 if "event" in st.session_state:
                     del st.session_state["event"]
             else:
@@ -649,7 +742,7 @@ def main() -> None:
     render_week(plan.first_week)
     render_program(plan)
     render_progress(plan)
-    render_review(plan)
+    render_review(plan, st.session_state.get("plan_id"))
     render_quiz(plan, profile, offline)
     render_roundtable(plan)
     render_adjust(profile, offline, plan)

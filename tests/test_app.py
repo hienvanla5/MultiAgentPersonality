@@ -4,9 +4,25 @@ from __future__ import annotations
 
 import pathlib
 
+import pytest
 from streamlit.testing.v1 import AppTest
 
+from lifeos import persistence
+from lifeos.memory import Store
+
 APP_PATH = str(pathlib.Path(__file__).resolve().parents[1] / "app.py")
+
+
+@pytest.fixture(autouse=True)
+def app_store(tmp_path, monkeypatch) -> Store:
+    """Chuyển `persistence.default_store` sang DB tạm.
+
+    Ứng dụng giờ ghi kế hoạch và thẻ ôn tập xuống SQLite; nếu không chặn, mỗi
+    lượt chạy test sẽ đổ rác vào `data/lifeos.db` thật của người dùng.
+    """
+    store = Store(f"sqlite:///{tmp_path / 'app-test.db'}")
+    monkeypatch.setattr(persistence, "default_store", lambda: store)
+    return store
 
 
 def _run_offline_app() -> AppTest:
@@ -135,3 +151,167 @@ def test_app_shows_acl_transcript_after_team_run():
     text = " ".join(item.value for item in app.text)
     assert "[request]" in text
     assert "orchestrator" in text
+
+
+# --- T1: thẻ ôn tập được lưu xuống SQLite ---
+
+
+def test_app_persists_review_cards_after_planning(app_store):
+    app = _run_offline_app()
+    app.button[0].click().run()
+    assert not app.exception
+
+    assert app_store.count_cards() > 0, "thẻ ôn tập phải được ghi xuống SQLite"
+    plan_id = app.session_state["plan_id"]
+    assert plan_id is not None
+    assert app_store.count_cards(plan_id) > 0
+
+
+def test_app_review_section_says_cards_are_saved(app_store):
+    app = _run_offline_app()
+    app.button[0].click().run()
+    assert not app.exception
+
+    captions = " ".join(c.value for c in app.caption)
+    assert "lưu trong SQLite" in captions
+
+
+def test_app_recording_a_review_updates_sqlite(app_store):
+    app = _run_offline_app()
+    app.button[0].click().run()
+
+    review_buttons = [b for b in app.button if "Ghi nhận lượt ôn" in b.label]
+    assert review_buttons, "phải có nút ghi nhận lượt ôn"
+    review_buttons[0].click().run()
+    assert not app.exception
+
+    plan_id = app.session_state["plan_id"]
+    cards = persistence.load_review_cards(app_store, plan_id)
+    assert any(c.repetitions > 0 for c in cards), "lượt ôn phải được ghi lại"
+
+
+def test_app_loads_existing_cards_instead_of_regenerating(app_store):
+    """Mở lại ứng dụng phải đọc thẻ cũ, không tạo lại từ đầu (mất tiến độ)."""
+    app = _run_offline_app()
+    app.button[0].click().run()
+    plan_id = app.session_state["plan_id"]
+
+    # Đẩy một thẻ lên chu kỳ xa để nhận ra nếu bị ghi đè
+    cards = persistence.load_review_cards(app_store, plan_id)
+    target = cards[0].topic
+    persistence.review_and_save(app_store, plan_id, target, quality=5)
+    persistence.review_and_save(app_store, plan_id, target, quality=5)
+    advanced = {c.topic: c.repetitions for c in persistence.load_review_cards(app_store, plan_id)}
+
+    # Chạy lại ứng dụng với cùng session (không bấm Lập kế hoạch lại)
+    app.run()
+    assert not app.exception
+    after = {c.topic: c.repetitions for c in persistence.load_review_cards(app_store, plan_id)}
+    assert after == advanced
+    assert after[target] == 2
+
+
+def test_app_shows_saved_plans_selector(app_store):
+    """Sau khi lưu kế hoạch, thanh bên phải có mục mở lại."""
+    app = _run_offline_app()
+    app.button[0].click().run()
+    assert not app.exception
+
+    subheaders = " ".join(item.value for item in app.sidebar.subheader)
+    assert "Kế hoạch đã lưu" in subheaders
+
+
+def test_app_sidebar_reports_no_saved_plans_when_empty(app_store):
+    app = _run_offline_app()
+    assert not app.exception
+    captions = " ".join(c.value for c in app.sidebar.caption)
+    assert "Chưa có kế hoạch nào" in captions
+
+
+def _saved_plan_box(app: AppTest):
+    """Tìm ô chọn "Mở lại" — thanh bên còn nhiều selectbox khác (phong cách...)."""
+    for box in app.sidebar.selectbox:
+        if box.label == "Mở lại":
+            return box
+    return None
+
+
+def test_app_saved_plan_button_hidden_until_a_plan_is_chosen(app_store):
+    """Mặc định là "—" nên chưa hiện nút tải; tránh tải nhầm kế hoạch."""
+    app = _run_offline_app()
+    app.button[0].click().run()
+    # `render_saved_plans` đọc DB ở đầu mỗi lượt chạy, còn kế hoạch được lưu ở
+    # cuối lượt — nên phải chạy thêm một lượt mới thấy kế hoạch vừa tạo.
+    app.run()
+    assert not app.exception
+
+    box = _saved_plan_box(app)
+    assert box is not None, "phải có ô chọn kế hoạch đã lưu"
+    assert box.value == "—"
+
+    labels = [b.label for b in app.sidebar.button]
+    assert not any("Tải kế hoạch này" in label for label in labels)
+
+
+def test_app_sidebar_selector_appears_after_planning(app_store):
+    """Sau khi lập kế hoạch, thanh bên phải liệt kê được kế hoạch đó."""
+    app = _run_offline_app()
+    app.button[0].click().run()
+    app.run()
+
+    box = _saved_plan_box(app)
+    assert box is not None
+    plan_id = app.session_state["plan_id"]
+    assert any(o.startswith(f"#{plan_id}") for o in box.options)
+
+
+def test_app_can_reload_a_saved_plan(app_store):
+    """Tải lại kế hoạch cũ phải khôi phục đúng `plan_id` và giữ thẻ ôn tập."""
+    app = _run_offline_app()
+    app.button[0].click().run()
+    plan_id = app.session_state["plan_id"]
+    assert app_store.count_cards(plan_id) > 0
+
+    # Phiên mới hoàn toàn: mất session_state, chỉ còn DB
+    fresh = _run_offline_app()
+    fresh.checkbox[0].set_value(True)
+    fresh.run()
+    assert "plan" not in fresh.session_state
+
+    box = _saved_plan_box(fresh)
+    assert box is not None
+    target = next(o for o in box.options if o.startswith(f"#{plan_id}"))
+    box.select(target).run()
+
+    load_buttons = [b for b in fresh.sidebar.button if "Tải kế hoạch này" in b.label]
+    assert load_buttons, "chọn kế hoạch rồi phải hiện nút tải"
+    load_buttons[0].click().run()
+    assert not fresh.exception
+
+    assert fresh.session_state["plan_id"] == plan_id
+    assert "Khoảng trống kỹ năng" in " ".join(
+        item.value for item in fresh.subheader
+    )
+
+
+def test_app_reloaded_plan_keeps_review_progress(app_store):
+    """Mở lại kế hoạch cũ không được xoá tiến độ ôn đã tích luỹ."""
+    app = _run_offline_app()
+    app.button[0].click().run()
+    plan_id = app.session_state["plan_id"]
+
+    topic = persistence.load_review_cards(app_store, plan_id)[0].topic
+    persistence.review_and_save(app_store, plan_id, topic, quality=5)
+
+    fresh = _run_offline_app()
+    fresh.checkbox[0].set_value(True)
+    fresh.run()
+    box = _saved_plan_box(fresh)
+    box.select(next(o for o in box.options if o.startswith(f"#{plan_id}"))).run()
+    [b for b in fresh.sidebar.button if "Tải kế hoạch này" in b.label][0].click().run()
+
+    cards = {
+        c.topic: c.repetitions
+        for c in persistence.load_review_cards(app_store, plan_id)
+    }
+    assert cards[topic] == 1

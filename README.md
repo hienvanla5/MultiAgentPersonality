@@ -163,6 +163,17 @@ uv run python scripts/demo_run.py --adapt --weeks 4 --skip-adjust
 Cần có kế hoạch đã lưu trước đó (`--save`). Hệ thống đọc lại SQLite, tính tỉ lệ
 hoàn thành thật, và tự hạ mức tải nếu bạn hay trượt việc.
 
+**Lưu thẻ ôn tập xuống SQLite:**
+
+```powershell
+uv run python scripts/demo_run.py --srs --weeks 4 --skip-adjust
+```
+
+Ghi thẻ xuống DB, ghi lại lần hai để chứng minh không nhân đôi, chấm một lượt ôn
+rồi đọc lại từ SQLite. Trong giao diện, thanh bên có mục **Kế hoạch đã lưu** để
+mở lại kế hoạch cũ kèm tiến độ ôn tập — không có bước này thì `plan_id` chỉ sống
+trong phiên và thẻ cũ sẽ thành mồ côi.
+
 ---
 
 ## 4. Cấu hình LLM
@@ -232,7 +243,7 @@ src/lifeos/
 ├── acl.py               # giao thức tin nhắn giữa agent (performative + bus)
 ├── parallel.py          # chạy song song các bước độc lập
 ├── progress.py          # theo dõi tiến độ trên lịch nhiều tuần
-├── persistence.py       # lưu/khôi phục/liệt kê kế hoạch
+├── persistence.py       # lưu/khôi phục/liệt kê kế hoạch + thẻ ôn tập
 ├── reflection.py        # suy ngẫm từ ký ức + phản hồi thật
 ├── srs.py               # ôn tập cách quãng (SM-2)
 ├── personas/
@@ -245,7 +256,7 @@ src/lifeos/
 │   ├── contract_net.py  # thương lượng phân việc (Contract Net)
 │   └── team.py          # phân rã mục tiêu + tự lập nhóm
 ├── memory/
-│   ├── store.py         # SQLite: lưu kế hoạch & sự kiện điều chỉnh
+│   ├── store.py         # SQLite: kế hoạch, sự kiện điều chỉnh, thẻ ôn tập
 │   └── vector.py        # Chroma: truy xuất ngữ nghĩa
 └── tools/
     └── calendar.py      # parse/ghi ICS, phát hiện & dịch khỏi khoảng bận
@@ -273,6 +284,8 @@ uv run pytest -q
 - `test_persistence.py` — lưu, khôi phục, cập nhật, liệt kê và đọc lại kế hoạch
 - `test_ics_export.py` — xuất `.ics`, ánh xạ tuần → ngày thật, đọc lại được
 - `test_srs.py` — giãn khoảng cách SM-2, reset khi quên, chặn trên/dưới
+- `test_srs_persistence.py` — thẻ ôn tập lưu xuống SQLite, ghi đè theo
+  `(plan_id, topic)`, thẻ đến hạn, chịu được bản ghi hỏng
 - `test_quiz.py` — quiz nhiều câu, chấm điểm, phát hiện chủ đề yếu
 - `test_llm.py` — trích JSON chịu lỗi + cascade structured output
 - `test_graph.py` — tích hợp: lập kế hoạch, vòng giảm tải, điều chỉnh, lưu trữ,
@@ -383,7 +396,6 @@ tại chỗ** (có test kiểm chứng).
   và thứ tự module, nhưng không "thông minh" như tuần 1 do LLM lập.
 - Xuất `.ics` được, nhưng **chưa có OAuth** Google Calendar (import thủ công).
 - `tools/search.py` còn là stub.
-- Thẻ ôn tập chưa được lưu xuống SQLite — mới tồn tại trong phiên làm việc.
 - Quiz chấm theo **đáp án cố định** do LLM sinh, chưa kiểm chứng lại tính đúng
   của đáp án đó.
 - **Phân rã nhiệm vụ là quy tắc cố định**, chưa do LLM sinh. Cấu trúc nhóm thì
