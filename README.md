@@ -11,6 +11,12 @@ Không chỉ dừng ở lập kế hoạch: hệ thống còn sinh **lịch nhi�
 tiến độ**, **ôn tập cách quãng**, **kiểm tra hiểu biết**, và **xuất `.ics`** để
 đưa vào Google Calendar.
 
+Ở tầng đa tác tử, các agent **tự trị** (có trạng thái nội bộ và quyền từ chối),
+**thương lượng** phân việc theo Contract Net Protocol, **tự lập nhóm** theo kỹ
+năng cần có, chạy **song song** khi độc lập, và **học từ kết quả thật** để điều
+chỉnh kế hoạch sau. Xem [mục 7](#7-đối-chiếu-8-đặc-tính-của-hệ-đa-tác-tử) để biết
+cái gì đã có sẵn và cái gì mới được bổ sung.
+
 ---
 
 ## 1. Ý tưởng cốt lõi: personality kép
@@ -76,6 +82,34 @@ bước lập lịch với `load_factor=0.8` (giảm 20% tải) rồi mới tổ
 **Bất biến cứng bằng code** (không phụ thuộc LLM): tổng giờ trong tuần luôn
 `≤ hours_per_week` — task vượt ngân sách bị cắt trong `scheduler._trim_to_budget`.
 
+### 2.1. Tầng đa tác tử: tự trị, thương lượng, tự tổ chức
+
+Song song với đồ thị LangGraph (thứ tự node cố định), dự án có một tầng **đa tác
+tử thực sự**, nơi cấu trúc nhóm không được lập trình sẵn:
+
+```
+   decompose(goal)                    AGENT_SKILLS
+        │                                  │
+        ▼                                  ▼
+   ┌─────────┐   kỹ năng cần có   ┌──────────────┐
+   │ 5 nhiệm │ ─────────────────▶ │ build_roster │──▶ nhóm co giãn
+   │   vụ    │                    └──────────────┘    (ai không có
+   └────┬────┘                                        việc thì không
+        │                                             được mời)
+        ▼
+   ┌──────────────────── ContractNet ────────────────────┐
+   │ 1. announce  orchestrator ──request──▶ mọi thành viên │
+   │ 2. bid       agent tự đánh giá ──propose/refuse──▶    │
+   │ 3. award     ──accept-proposal──▶ người thắng         │
+   │              ──reject-proposal──▶ người còn lại       │
+   │ 4. report    ──inform──▶ orchestrator                 │
+   └───────────────────────────────────────────────────────┘
+```
+
+Điểm mấu chốt: **không ai bị gán việc**. Bộ điều phối chỉ công bố nhiệm vụ; mỗi
+agent tự tính điểm phù hợp dựa trên trạng thái nội bộ (năng lực còn trống, kỹ
+năng, số việc đã làm, độ tin cậy) rồi tự quyết định bỏ thầu hay từ chối.
+
 ---
 
 ## 3. Cài đặt & chạy
@@ -107,7 +141,27 @@ Trong giao diện có sẵn checkbox **"Dùng LLM giả (offline)"** để chạ
 luồng mà không tốn phí API.
 
 Giao diện có thêm các mục **lịch nhiều tuần**, **tiến độ**, **ôn tập cách quãng**,
-**kiểm tra hiểu biết** và nút **tải `.ics`**. Các cờ CLI tương ứng ở [mục 7](#7-sau-khi-có-kế-hoạch-lịch-dài-tiến-độ-ôn-tập-kiểm-tra).
+**kiểm tra hiểu biết**, **tự tổ chức nhóm** và nút **tải `.ics`**. Các cờ CLI
+tương ứng ở [mục 8](#8-sau-khi-có-kế-hoạch-lịch-dài-tiến-độ-ôn-tập-kiểm-tra).
+
+**Xem tầng đa tác tử (tự trị · thương lượng · tự tổ chức):**
+
+```powershell
+uv run python scripts/demo_run.py --team --weeks 4 --skip-adjust
+```
+
+Lệnh này in ra: mục tiêu được phân rã thành nhiệm vụ, nhóm tự lập theo kỹ năng
+cần có, kết quả từng vòng thương lượng, và **bản ghi giao thức ACL** đầy đủ bốn
+pha (`request` → `propose`/`refuse` → `accept-proposal`).
+
+**Bật học từ quá khứ:**
+
+```powershell
+uv run python scripts/demo_run.py --adapt --weeks 4 --skip-adjust
+```
+
+Cần có kế hoạch đã lưu trước đó (`--save`). Hệ thống đọc lại SQLite, tính tỉ lệ
+hoàn thành thật, và tự hạ mức tải nếu bạn hay trượt việc.
 
 ---
 
@@ -175,14 +229,21 @@ src/lifeos/
 ├── clarify.py           # phát hiện mục tiêu mơ hồ → câu hỏi làm rõ
 ├── demo.py              # LLM giả cho demo/test offline
 ├── graph.py             # LangGraph: build_graph + adjust_graph
+├── acl.py               # giao thức tin nhắn giữa agent (performative + bus)
+├── parallel.py          # chạy song song các bước độc lập
 ├── progress.py          # theo dõi tiến độ trên lịch nhiều tuần
 ├── persistence.py       # lưu/khôi phục/liệt kê kế hoạch
+├── reflection.py        # suy ngẫm từ ký ức + phản hồi thật
 ├── srs.py               # ôn tập cách quãng (SM-2)
 ├── personas/
 │   ├── base.py          # lớp Persona
 │   ├── registry.py      # 6 persona
 │   └── tone_adapter.py  # UserProfile → chỉ thị giọng điệu
-├── agents/              # career, curriculum, scheduler, tutor, critic, nudger, orchestrator
+├── agents/
+│   ├── career.py … orchestrator.py   # 6 agent chuyên trách
+│   ├── autonomy.py      # AgentState + AutonomousAgent (tự trị)
+│   ├── contract_net.py  # thương lượng phân việc (Contract Net)
+│   └── team.py          # phân rã mục tiêu + tự lập nhóm
 ├── memory/
 │   ├── store.py         # SQLite: lưu kế hoạch & sự kiện điều chỉnh
 │   └── vector.py        # Chroma: truy xuất ngữ nghĩa
@@ -199,16 +260,23 @@ uv run pytest -q
 ```
 
 - `test_personas.py` — persona + tone adapter + câu hỏi làm rõ
+- `test_acl.py` — performative, ghép hội thoại, broadcast, `reply` vs `notify`
+- `test_autonomy.py` — trạng thái nội bộ, tự đánh giá, quyền từ chối, độ tin cậy
+- `test_contract_net.py` — đủ 4 pha thương lượng, trao thầu tất định, hết năng lực
+- `test_team.py` — phân rã mục tiêu, nhóm co giãn theo kỹ năng cần có
+- `test_parallel.py` — giữ thứ tự, một job lỗi không phá các job khác, nhanh hơn tuần tự
+- `test_reflection.py` — đọc ký ức, tính tỉ lệ hoàn thành, đề xuất hệ số tải
 - `test_calendar.py` — parse ICS, khoảng bận, dịch giờ
 - `test_scheduler.py` — ngân sách giờ, tránh khoảng bận, chuẩn hoá
 - `test_program.py` — phân bổ module theo tuần + sinh lịch nhiều tuần không cần LLM
 - `test_progress.py` — đánh dấu buổi học, % hoàn thành, streak, đúng/chệch tiến độ
-- `test_persistence.py` — lưu, khôi phục, cập nhật và liệt kê kế hoạch
+- `test_persistence.py` — lưu, khôi phục, cập nhật, liệt kê và đọc lại kế hoạch
 - `test_ics_export.py` — xuất `.ics`, ánh xạ tuần → ngày thật, đọc lại được
 - `test_srs.py` — giãn khoảng cách SM-2, reset khi quên, chặn trên/dưới
 - `test_quiz.py` — quiz nhiều câu, chấm điểm, phát hiện chủ đề yếu
 - `test_llm.py` — trích JSON chịu lỗi + cascade structured output
-- `test_graph.py` — tích hợp: lập kế hoạch, vòng giảm tải, điều chỉnh, lưu trữ
+- `test_graph.py` — tích hợp: lập kế hoạch, vòng giảm tải, điều chỉnh, lưu trữ,
+  học từ quá khứ, chịu lỗi khi một agent hỏng
 - `test_app.py` — giao diện Streamlit qua `AppTest` (chạy offline)
 - `test_eval.py` — **LLM-as-judge** chấm `coherence` + `tone_fit`
   (tự động bỏ qua nếu chưa có `LLM_API_KEY`)
@@ -219,7 +287,50 @@ endpoint thật.
 
 ---
 
-## 7. Sau khi có kế hoạch: lịch dài, tiến độ, ôn tập, kiểm tra
+## 7. Đối chiếu 8 đặc tính của hệ đa tác tử
+
+Bảng dưới nói rõ **cái gì đã có từ trước** và **cái gì được bổ sung** trong đợt
+này. Cột "trước" ghi trung thực cả những chỗ còn thiếu.
+
+| # | Đặc tính | Trước | Sau | Ở đâu |
+|---|---|---|---|---|
+| 1 | **Tự trị** (Autonomy) | ❌ Agent là hàm thuần, không có trạng thái nội bộ, không có quyền từ chối | ✅ Mỗi agent giữ `AgentState` (tải, năng lực, độ tin cậy, lịch sử) và **tự quyết định** nhận việc hay từ chối | `agents/autonomy.py` |
+| 2 | **Tương tác** (Social Ability) | ⚠️ Có `Roundtable` nhưng chỉ là văn bản để hiển thị, không có hành vi giao tiếp | ✅ `ACLMessage` có **performative** (request/inform/propose/refuse/accept-proposal…) + `MessageBus` ghép hội thoại | `acl.py` |
+| 3 | **Cộng tác & phân phối** | ⚠️ `synthesize()` chỉ tổng hợp văn bản; việc phân rã do đồ thị hard-code | ✅ Bộ điều phối **phân rã mục tiêu thành nhiệm vụ** rồi giao qua thương lượng | `agents/team.py` |
+| 4 | **Chuyên môn hóa** | ✅ Đã có — 6 persona, mỗi agent một module riêng | ✅ Giữ nguyên, nay kèm khai báo kỹ năng máy đọc được (`AGENT_SKILLS`) | `personas/registry.py` |
+| 5 | **Thương lượng** (Negotiation) | ❌ **Không có gì** — phản biện nói "quá tải" thì đồ thị tự giảm tải, không ai thương lượng | ✅ **Contract Net Protocol** đủ 4 pha: announce → bid → award → report | `agents/contract_net.py` |
+| 6 | **Tự tổ chức** (Self-Organization) | ❌ Thứ tự node cố định trong `StateGraph` | ✅ Nhóm **co giãn theo việc**: ai không có nhiệm vụ phù hợp thì không được mời; thêm agent mới chỉ cần khai báo kỹ năng | `agents/team.py` |
+| 7 | **Mở rộng & song song** | ❌ Chạy tuần tự hoàn toàn | ✅ `map_parallel` chạy song song hội đồng persona và bước bỏ thầu | `parallel.py` |
+| 8 | **Học liên tục** | ⚠️ Bộ nhớ **chỉ ghi** — `memory.search()` chưa bao giờ được gọi trong luồng thật | ✅ **Suy ngẫm** trước khi lập kế hoạch: đọc lại ký ức + tỉ lệ hoàn thành thật để tự hạ mức tải | `reflection.py` |
+
+Hai điểm đáng nói về tính trung thực của bảng này:
+
+- **Đặc tính 4 đã có sẵn** từ trước, không phải làm mới. Nói nó "đã có" quan
+  trọng hơn là gán ghép cho đủ 8 ô.
+- **Đặc tính 8 trước đây chỉ là hình thức.** `VectorMemory` tồn tại và có test,
+  nhưng `search()` **chỉ được gọi trong test** — nghĩa là hệ thống ghi ký ức rồi
+  không bao giờ đọc lại. Đây là dạng "tính năng có mà không hoạt động" khó phát
+  hiện, nên đợt này khép vòng bằng `reflection.py`.
+
+### Học từ phản hồi thật hoạt động thế nào
+
+`reflection.outcome_stats()` nhìn tỉ lệ hoàn thành của các kế hoạch cũ và quyết
+định mức tải cho kế hoạch mới:
+
+| Tỉ lệ hoàn thành trung bình | Hệ số tải | Ý nghĩa |
+|---|---|---|
+| < 50% | 0.75 | Người dùng đang nhận quá sức — giảm mạnh |
+| 50% – <75% | 0.90 | Chưa đều — giảm nhẹ |
+| ≥ 75% | 1.00 | Giữ nguyên |
+
+Hệ số này **nhân** vào mức tải hiện tại chứ không gán đè, nên nếu hội đồng cũng
+kết luận quá tải thì hai mức giảm cộng dồn (`0.75 × 0.8 = 0.6`). Nếu gán đè, một
+kế hoạch đã được hạ xuống 0.75 vì lịch sử sẽ bị đẩy ngược lên 0.8 — tức là vô
+tình làm nặng thêm đúng cái mà dữ liệu nói là quá sức. Có test riêng cho việc này.
+
+---
+
+## 8. Sau khi có kế hoạch: lịch dài, tiến độ, ôn tập, kiểm tra
 
 Luồng lập kế hoạch chỉ sinh **tuần 1** bằng LLM. Bốn tính năng dưới đây biến nó
 thành thứ dùng được hàng ngày — và **không tốn thêm lời gọi LLM nào**, vì đều là
@@ -249,7 +360,7 @@ uv run python scripts/demo_run.py --list-plans    # xem lại kế hoạch đã 
 
 ---
 
-## 8. Xử lý tình huống lệch kế hoạch
+## 9. Xử lý tình huống lệch kế hoạch
 
 `adjust_plan()` chạy đồ thị thứ hai:
 
@@ -265,7 +376,7 @@ tại chỗ** (có test kiểm chứng).
 
 ---
 
-## 9. Giới hạn của MVP
+## 10. Giới hạn của MVP
 
 - Giao diện và nội dung mẫu bằng **tiếng Việt**.
 - Lịch nhiều tuần sinh theo **công thức** cho tuần 2 trở đi: đúng ngân sách giờ
@@ -275,12 +386,22 @@ tại chỗ** (có test kiểm chứng).
 - Thẻ ôn tập chưa được lưu xuống SQLite — mới tồn tại trong phiên làm việc.
 - Quiz chấm theo **đáp án cố định** do LLM sinh, chưa kiểm chứng lại tính đúng
   của đáp án đó.
+- **Phân rã nhiệm vụ là quy tắc cố định**, chưa do LLM sinh. Cấu trúc nhóm thì
+  động, nhưng danh sách nhiệm vụ cho một mục tiêu phát triển bản thân thì giống
+  nhau giữa các mục tiêu.
+- **Chưa có giao tiếp giữa các agent theo thời gian thực.** `MessageBus` ghi lại
+  một phiên thương lượng đã kết thúc; các agent không chạy như tiến trình nền
+  độc lập gửi tin cho nhau.
+- **Thương lượng một vòng.** Agent bỏ thầu một lần rồi bộ điều phối chọn ngay;
+  chưa có mặc cả nhiều vòng hay liên minh giữa các agent.
+- Học liên tục dựa trên **tỉ lệ hoàn thành**, chưa học từ nội dung phản hồi
+  dạng văn bản của người dùng.
 
-**Hướng mở rộng:** gắn Google Calendar qua OAuth, lưu thẻ SRS, thêm agent luyện
-phỏng vấn, nhiều mục tiêu song song, và bộ test eval lớn hơn.
+**Hướng mở rộng:** gắn Google Calendar qua OAuth, lưu thẻ SRS, phân rã nhiệm vụ
+bằng LLM, thương lượng nhiều vòng, agent chạy nền thật sự, và bộ test eval lớn hơn.
 
 ---
 
-## 10. Giấy phép
+## 11. Giấy phép
 
 MIT — xem [LICENSE](LICENSE).
