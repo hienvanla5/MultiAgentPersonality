@@ -378,14 +378,34 @@ uv run pytest -q
 - `test_graph.py` — tích hợp: lập kế hoạch, vòng giảm tải, điều chỉnh, lưu trữ,
   học từ quá khứ, chịu lỗi khi một agent hỏng
 - `test_app.py` — giao diện Streamlit qua `AppTest` (chạy offline)
-- `test_eval.py` — **LLM-as-judge** chấm `coherence` + `tone_fit`
-  (tự động bỏ qua nếu chưa có `LLM_API_KEY`)
+- `test_eval.py` — **LLM-as-judge** chấm `coherence` + `tone_fit`. Gọi API thật nên
+  **mặc định bị loại khỏi bộ test** (xem mục 6.1)
 
-Test dùng `FakeLLM` tất định nên chạy nhanh và không tốn API. Riêng `test_eval.py`
-gọi API thật và mất vài phút — đó là bài kiểm chứng end-to-end duy nhất chạm
-endpoint thật.
+Test dùng `FakeLLM` tất định nên chạy nhanh và không tốn API.
 
-### 6.1. Lint & kiểm tra kiểu
+### 6.1. Test eval (gọi API thật)
+
+`test_eval.py` là bài duy nhất chạm endpoint thật, nên nó được đánh dấu `eval` và
+**bị loại khỏi `uv run pytest -q` mặc định**. Bộ test mặc định vì thế không cần
+mạng, không cần API key và luôn tất định.
+
+```powershell
+uv run pytest -q              # bộ mặc định, KHÔNG gồm eval (~50 giây)
+uv run pytest -q -m eval      # chỉ chạy eval (~3 phút, cần LLM_API_KEY)
+uv run pytest -q -m ""        # chạy tất cả, kể cả eval
+```
+
+Cách đánh dấu này có lý do: trước đây `pytest -q` mặc định phụ thuộc mạng, API key
+và quota, nên một trục trặc nhất thời của nhà cung cấp làm cả bộ test báo đỏ — và
+báo đỏ đó **không phân biệt được** với một hồi quy thật.
+
+Trong bài eval, mỗi lời gọi LLM được **thử lại 3 lần** khi ném lỗi. Chỉ lỗi mới
+được thử lại: điểm chấm thấp **không** thử lại, vì điểm thấp là tín hiệu thật về
+chất lượng và thử lại chỉ để có điểm đẹp hơn là tự lừa mình. Khi hỏng hẳn, thông
+báo lỗi liệt kê lỗi của từng lần thử — lỗi giống hệt nhau qua các lần là hỏng thật
+(sai key, hết quota, sai model), còn lỗi khác nhau từng lần là trục trặc nhất thời.
+
+### 6.2. Lint & kiểm tra kiểu
 
 ```powershell
 uv run ruff check .          # lint
