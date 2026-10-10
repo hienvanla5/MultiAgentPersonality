@@ -1,0 +1,92 @@
+# CI: chạy lint, kiểm tra kiểu và test trên môi trường sạch.
+#
+# Mục đích: biến các cổng kiểm tra thành rào chắn thật thay vì việc phải nhớ chạy
+# tay. Trước đây repo đã có ruff + mypy + pytest nhưng không có gì bắt buộc chạy
+# chúng, nên một commit có thể lên `main` mà chưa từng được kiểm.
+#
+# Chạy trên CẢ Ubuntu VÀ Windows vì hai lý do cụ thể, không phải cho đủ bộ:
+#   - Máy phát triển là Windows, nên mã có những nhánh chỉ Windows mới đi qua
+#     (`os.name == "nt"`, `os.chmod` không thực thi bit quyền kiểu POSIX).
+#   - Nơi triển khai thật gần như chắc chắn là Linux.
+# Chỉ chạy Ubuntu thì các nhánh Windows không bao giờ được kiểm, và ngược lại.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Quyền tối thiểu: CI chỉ cần đọc mã nguồn, không cần ghi gì.
+permissions:
+  contents: read
+
+# Đẩy liên tiếp lên cùng một nhánh thì lần chạy cũ không còn ý nghĩa — huỷ đi để
+# không chiếm runner.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint và kiểm tra kiểu
+    runs-on: ubuntu-latest
+    # Chặn trên để một bước bị treo không ngốn runner hàng giờ.
+    timeout-minutes: 20
+    steps:
+      - name: Lấy mã nguồn
+        uses: actions/checkout@v7
+
+      # `setup-uv` KHÔNG có tag nổi kiểu `v10` (chỉ có `v10.3.0`, `v10.2.0`...),
+      # nên phải ghim đúng phiên bản. Đổi lại được tính tái lập: cùng một commit
+      # luôn dùng đúng phiên bản uv, không phụ thuộc thời điểm chạy.
+      - name: Cài uv
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-python: true
+
+      # `--locked` khẳng định `uv.lock` đã khớp `pyproject.toml`. Nếu ai đó sửa
+      # pyproject mà quên cập nhật lockfile thì job đỏ ngay, thay vì âm thầm
+      # resolve ra một bộ phụ thuộc khác với bộ đang dùng ở máy phát triển.
+      - name: Cài phụ thuộc
+        run: uv sync --locked
+
+      - name: Ruff
+        run: uv run ruff check .
+
+      - name: Mypy
+        run: uv run mypy
+
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      # Một hệ điều hành hỏng vẫn phải thấy kết quả của hệ còn lại. Nếu không,
+      # lỗi chỉ xảy ra trên Windows sẽ bị che mất ngay khi Ubuntu đỏ trước.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - name: Lấy mã nguồn
+        uses: actions/checkout@v7
+
+      - name: Cài uv
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-python: true
+
+      - name: Cài phụ thuộc
+        run: uv sync --locked
+
+      # Bộ test mặc định không chạm mạng: `test_eval.py` gọi LLM thật đã bị loại
+      # bằng marker `eval` trong `addopts` của pyproject.toml. Nhờ vậy CI không cần
+      # API key, không phụ thuộc quota, và không đỏ vì trục trặc của nhà cung cấp.
+      # Muốn chạy eval thì dùng `uv run pytest -q -m eval` ở máy có LLM_API_KEY.
+      - name: Chạy test
+        run: uv run pytest -q

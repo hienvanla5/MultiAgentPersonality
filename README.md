@@ -1,5 +1,7 @@
 # Life OS — multi-agent personality
 
+[![CI](https://github.com/hienvanla5/MultiAgentPersonality/actions/workflows/ci.yml/badge.svg)](https://github.com/hienvanla5/MultiAgentPersonality/actions/workflows/ci.yml)
+
 Hệ **multi-agent** đồng hành cùng một mục tiêu cá nhân, xuyên suốt ba lĩnh vực:
 **nghề nghiệp → học tập → lịch tuần**. Mỗi agent có **tính cách riêng**, và toàn bộ
 giọng điệu **thích nghi theo hồ sơ người dùng**.
@@ -439,6 +441,38 @@ nguồn: khi `uv` gỡ một gói, nó có thể để lại thư mục cụt tr
 `psutil/` còn `_psutil_windows.pyd` nhưng mất `__init__.py`). Thư mục đó thành
 namespace package che mất gói thật và làm `mypy` sập khi dò số luồng CPU. Cách
 sửa: xoá thư mục cụt đó rồi chạy lại, hoặc `uv sync --reinstall`.
+
+### 6.3. CI trên GitHub Actions
+
+Mọi push lên `main` và mọi pull request đều chạy
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml):
+
+| Job | Chạy trên | Nội dung |
+|---|---|---|
+| `lint` | Ubuntu | `uv run ruff check .` và `uv run mypy` |
+| `test` | Ubuntu **và** Windows | `uv run pytest -q` |
+
+**Vì sao chạy cả Windows.** Máy phát triển là Windows, nên mã có những nhánh chỉ
+Windows mới đi qua (`os.name == "nt"`, `os.chmod` không thực thi bit quyền kiểu
+POSIX). Nhưng nơi triển khai thật gần như chắc chắn là Linux. Chỉ chạy một trong
+hai thì một nửa số nhánh đó không bao giờ được kiểm.
+
+**Vì sao ghim `setup-uv@v10.3.0` chứ không phải `@v10`.** Action này **không phát
+hành tag nổi theo số major** — khác `actions/checkout` (có cả `v7` lẫn `v7.0.1`),
+`astral-sh/setup-uv` chỉ có `v10.3.0`, `v10.2.0`, … nên `@v10` sẽ không resolve.
+Ghim đúng phiên bản cũng cho tính tái lập: cùng một commit luôn dùng đúng phiên
+bản uv, không phụ thuộc thời điểm chạy.
+
+**Vì sao `uv sync --locked`.** Cờ này khẳng định `uv.lock` đã khớp
+`pyproject.toml`. Nếu sửa `pyproject.toml` mà quên cập nhật lockfile thì job đỏ
+ngay, thay vì âm thầm resolve ra một bộ phụ thuộc khác với bộ đang dùng ở máy phát
+triển.
+
+**CI không cần API key.** Bộ test mặc định đã loại `test_eval.py` ra bằng marker
+`eval` (xem mục 6.1), nên CI không chạm mạng và không phụ thuộc quota. Muốn chạy
+eval trên CI thì cần thêm một workflow `workflow_dispatch` có secret `LLM_API_KEY`
+— chưa làm vì repo chưa có secret đó, và một workflow không chạy được thì chỉ là
+mã chết.
 
 ---
 
