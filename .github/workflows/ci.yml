@@ -28,6 +28,22 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Ghi chú về hai cảnh báo SẼ THẤY trong log — cả hai đều vô hại, không phải lỗi:
+#
+# 1. "Python cache path ... does not exist on disk. Skipping Python cache save
+#    because no managed Python installation was found."
+#    Trên `ubuntu-24.04`, Python 3.12 đã có sẵn trong image nên uv dùng luôn bản hệ
+#    thống và không có Python do uv quản lý để mà cache. Khi `ubuntu-latest` chuyển
+#    sang Ubuntu 26 (19/10/2026), bản hệ thống sẽ không còn 3.12, uv sẽ tự tải Python
+#    3.12 do nó quản lý, và cảnh báo này tự biến mất.
+#    KHÔNG "sửa" bằng `UV_PYTHON_PREFERENCE=only-managed`: nó buộc uv tải Python mỗi
+#    lần mà không đổi phiên bản Python thực dùng, vì `python-version: "3.12"` đã bảo
+#    đảm đúng 3.12 bất kể image.
+#
+# 2. "Failed to save: Unable to reserve cache ... another job may be creating this
+#    cache." — job `lint` và `test (ubuntu-latest)` cùng khoá cache nên tranh nhau
+#    ghi. Đã xử lý bằng `save-cache: false` ở job `lint` bên dưới.
+
 jobs:
   lint:
     name: Lint và kiểm tra kiểu
@@ -41,12 +57,18 @@ jobs:
       # `setup-uv` KHÔNG có tag nổi kiểu `v10` (chỉ có `v10.3.0`, `v10.2.0`...),
       # nên phải ghim đúng phiên bản. Đổi lại được tính tái lập: cùng một commit
       # luôn dùng đúng phiên bản uv, không phụ thuộc thời điểm chạy.
+      #
+      # `save-cache: false` vì job này cài đúng bộ phụ thuộc giống hệt job
+      # `test (ubuntu-latest)`, nên chúng dùng chung một khoá cache. Để cả hai cùng
+      # ghi thì GitHub báo "Unable to reserve cache" và một job mất lượt lưu — vô
+      # hại nhưng làm log ồn ào. Cho `test` lo việc ghi, `lint` chỉ đọc lại.
       - name: Cài uv
         uses: astral-sh/setup-uv@v10.3.0
         with:
           python-version: "3.12"
           enable-cache: true
           cache-python: true
+          save-cache: "false"
 
       # `--locked` khẳng định `uv.lock` đã khớp `pyproject.toml`. Nếu ai đó sửa
       # pyproject mà quên cập nhật lockfile thì job đỏ ngay, thay vì âm thầm
