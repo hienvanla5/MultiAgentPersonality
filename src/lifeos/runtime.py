@@ -35,9 +35,14 @@ from .agents.autonomy import AutonomousAgent, Bid, Refusal, Task
 from .agents.contract_net import (
     CONTRACT_NET_PROTOCOL,
     MANAGER,
+    MAX_ROUNDS,
     ContractNetResult,
+    RoundRecord,
+    can_form_coalition,
+    coalition_reason,
     no_winner_reason,
-    pick_winner,
+    plan_award,
+    single_reason,
 )
 
 #: Thời gian chờ phản hồi mặc định cho một vòng (giây).
@@ -292,7 +297,10 @@ class AgentRuntime:
         task = self._tasks.get(str(message.metadata.get("task_id", "")))
         if task is None:
             return None
-        return slot.agent.assess(task)
+        # Vòng liên minh cho phép nhận một phần; các vòng khác thì không.
+        return slot.agent.assess(
+            task, allow_partial=bool(message.metadata.get("allow_partial", False))
+        )
 
     def _respond(self, slot: _AgentSlot, message: ACLMessage, outcome) -> None:
         """Ghi câu trả lời của agent vào bản ghi ACL và chuyển cho người gom."""
@@ -305,13 +313,14 @@ class AgentRuntime:
                 Performative.PROPOSE,
                 f"tin cậy {outcome.confidence:.2f}, chi phí {outcome.cost:.2f} "
                 f"({outcome.reason})",
-                # Ghi đủ confidence/cost để bên gom dựng lại đúng giá thầu,
+                # Ghi đủ confidence/cost/share để bên gom dựng lại đúng giá thầu,
                 # không phải đoán từ phần nội dung.
                 metadata={
                     **message.metadata,
                     "score": outcome.score,
                     "confidence": outcome.confidence,
                     "cost": outcome.cost,
+                    "share": outcome.share,
                     "bid_reason": outcome.reason,
                 },
             )
@@ -346,12 +355,17 @@ class AgentRuntime:
         *,
         timeout: float | None = None,
         conversation_id: str | None = None,
+        max_rounds: int = MAX_ROUNDS,
     ) -> ContractNetResult:
-        """Một vòng Contract Net, nhưng các agent phản hồi thật sự đồng thời.
+        """Thương lượng một nhiệm vụ, các agent phản hồi thật sự đồng thời.
 
         Khác `ContractNet.run`: ở đây bộ điều phối **gửi tin rồi chờ**, không
         tự gọi hàm của từng agent theo thứ tự. Ai chậm thì phần người đó bị
         tính là không phản hồi, không kéo dài lượt chạy.
+
+        Thứ tự vòng giống đường đồng bộ: nhận trọn → ghép liên minh. Đường này
+        **chưa** có vòng chia nhỏ phạm vi (`_relax`) như đường đồng bộ — xem
+        mục giới hạn trong README.
         """
         if not self._started:
             raise RuntimeError("phải gọi start() trước khi thương lượng")
@@ -375,17 +389,90 @@ class AgentRuntime:
             if agent.key not in self._slots:
                 raise KeyError(f"agent '{agent.key}' chưa được đăng ký")
 
+        rounds: list[RoundRecord] = []
+        cid = conversation_id or ""
+        allow_partial = False
+        coalition_tried = False
+
+        for _ in range(1, max(1, int(max_rounds)) + 1):
+            record, cid = await self._negotiate_once(
+                task,
+                candidates,
+                budget=budget,
+                conversation_id=cid,
+                round_no=len(rounds) + 1,
+                allow_partial=allow_partial,
+            )
+            rounds.append(record)
+            if record.ok:
+                break
+            # Chưa ai nhận trọn: thử ghép liên minh một lần, như đường đồng bộ.
+            if not coalition_tried and can_form_coalition(task, candidates):
+                coalition_tried = True
+                allow_partial = True
+                continue
+            break
+
+        decided = rounds[-1]
+        result = ContractNetResult(
+            task=task,
+            conversation_id=cid,
+            bids=decided.bids,
+            refusals=decided.refusals,
+            awarded_to=decided.awarded_to,
+            reason=decided.reason,
+            rounds=rounds,
+            original_effort=task.effort,
+            coalition=decided.coalition,
+        )
+
+        if result.assigned:
+            # Liên minh phủ `sum(phần)`; một người thì phủ trọn nhiệm vụ.
+            covered = (
+                sum(share.effort for share in result.coalition)
+                if result.coalition
+                else task.effort
+            )
+            result.remaining_effort = round(max(0.0, task.effort - covered), 4)
+            result.partial = result.remaining_effort > 0
+        else:
+            result.remaining_effort = task.effort
+        return result
+
+    async def _negotiate_once(
+        self,
+        task: Task,
+        candidates: list[AutonomousAgent],
+        *,
+        budget: float,
+        conversation_id: str,
+        round_no: int,
+        allow_partial: bool,
+    ) -> tuple[RoundRecord, str]:
+        """Một vòng: công bố → chờ phản hồi → trao thầu (một người hoặc liên minh)."""
+        text = (
+            f"{task.description} (kỹ năng: {task.skill or 'không yêu cầu'}, "
+            f"công sức {task.effort:.2f})"
+        )
+        if allow_partial:
+            text += " — nhận một phần cũng được, hãy bỏ thầu phần bạn làm được"
+        if round_no > 1:
+            text = f"[vòng {round_no}] {text}"
+
         announcements = self.bus.broadcast(
             self.manager,
             [agent.key for agent in candidates],
-            f"{task.description} (kỹ năng: {task.skill or 'không yêu cầu'}, "
-            f"công sức {task.effort:.2f})",
+            text,
             performative=Performative.REQUEST,
             protocol=CONTRACT_NET_PROTOCOL,
-            conversation_id=conversation_id,
-            metadata={"task_id": task.id},
+            conversation_id=conversation_id or None,
+            metadata={
+                "task_id": task.id,
+                "round": round_no,
+                "allow_partial": allow_partial,
+            },
         )
-        cid = announcements[0].conversation_id if announcements else ""
+        cid = announcements[0].conversation_id if announcements else conversation_id
 
         collector: asyncio.Queue = asyncio.Queue()
         self._collectors[cid] = collector
@@ -414,6 +501,7 @@ class AgentRuntime:
                         confidence=reply.metadata.get("confidence", 0.5),
                         cost=reply.metadata.get("cost", 0.3),
                         reason=reply.metadata.get("bid_reason", reply.content),
+                        share=reply.metadata.get("share", 0.0),
                     )
                 )
             else:
@@ -433,55 +521,81 @@ class AgentRuntime:
                     )
                 )
 
-        result = ContractNetResult(
-            task=task,
-            conversation_id=cid,
-            bids=bids,
-            refusals=refusals,
-            original_effort=task.effort,
+        record = RoundRecord(
+            round=round_no, task=task, bids=bids, refusals=refusals
         )
 
         if not bids:
-            result.reason = no_winner_reason(refusals, candidates)
-            result.remaining_effort = task.effort
+            record.reason = no_winner_reason(refusals, candidates)
             self.bus.inform(
                 self.manager,
                 self.manager,
-                f"Không ai nhận '{task.id}': {result.reason}",
+                f"Không ai nhận '{task.id}': {record.reason}",
                 conversation_id=cid,
             )
-            return result
+            return record, cid
 
-        winner = pick_winner(bids)
-        result.awarded_to = winner.agent
-        result.reason = (
-            f"{winner.agent} thắng với điểm {winner.score:.3f} ({winner.reason})"
+        lead, shares = plan_award(task, bids)
+        if lead is None:  # pragma: no cover - `bids` không rỗng nên không xảy ra
+            record.reason = no_winner_reason(refusals, candidates)
+            return record, cid
+
+        record.awarded_to = lead
+        record.coalition = shares
+        record.reason = (
+            coalition_reason(task, shares)
+            if shares
+            else single_reason(next(bid for bid in bids if bid.agent == lead))
+        )
+
+        # Phần mỗi agent nhận. Không phải liên minh thì nhận trọn nhiệm vụ.
+        portions = (
+            {share.agent: share.effort for share in shares}
+            if shares
+            else {lead: task.effort}
         )
 
         for agent in candidates:
-            if agent.key == winner.agent:
+            if agent.key in portions:
+                portion = portions[agent.key]
                 await self.send(
                     self.manager,
                     agent.key,
-                    result.reason,
+                    (
+                        f"{record.reason} — phần của bạn: {portion:.2f} công sức"
+                        if shares
+                        else record.reason
+                    ),
                     performative=Performative.ACCEPT_PROPOSAL,
                     conversation_id=cid,
                     protocol=CONTRACT_NET_PROTOCOL,
-                    metadata={"task_id": task.id, "winner": winner.agent},
+                    metadata={
+                        "task_id": task.id,
+                        "round": round_no,
+                        "winner": lead,
+                        "share": portion,
+                    },
                 )
             elif agent.key in responded:
                 await self.send(
                     self.manager,
                     agent.key,
-                    f"đã giao cho {winner.agent}",
+                    f"đã giao cho {lead}",
                     performative=Performative.REJECT_PROPOSAL,
                     conversation_id=cid,
                     protocol=CONTRACT_NET_PROTOCOL,
-                    metadata={"task_id": task.id},
+                    metadata={"task_id": task.id, "round": round_no},
                 )
 
-        self.agent(winner.agent).accept(task)
-        return result
+        # Người nhận việc: cập nhật trạng thái nội bộ theo đúng phần mình nhận.
+        for agent in candidates:
+            if agent.key not in portions:
+                continue
+            portion = portions[agent.key]
+            self.agent(agent.key).accept(
+                task.model_copy(update={"effort": portion}) if shares else task
+            )
+        return record, cid
 
     async def negotiate_all(
         self,

@@ -211,6 +211,14 @@ def print_team(goal: str, llm=None) -> None:
     for result in plan.results:
         if result.assigned:
             note = ""
+            if result.is_coalition:
+                note += (
+                    " 🤝 liên minh: "
+                    + " + ".join(
+                        f"{share.agent} {share.effort:.2f}"
+                        for share in result.coalition
+                    )
+                )
             if result.negotiated:
                 note += f" [{result.round_count} vòng]"
             if result.partial:
@@ -218,12 +226,30 @@ def print_team(goal: str, llm=None) -> None:
                     f" ⚠ chỉ {result.agreed_effort:.2f}/{result.original_effort:.2f}"
                     f" công sức, còn {result.remaining_effort:.2f} chưa ai nhận"
                 )
+            target = result.awarded_to or "—"
+            if result.is_coalition:
+                target = f"{len(result.coalition)} agent"
             print(
-                f"    ✓ {result.task.id:<14} → {result.awarded_to:<10} "
+                f"    ✓ {result.task.id:<14} → {target:<10} "
                 f"({result.bid_count} thầu, {len(result.refusals)} từ chối){note}"
             )
         else:
             print(f"    ✗ {result.task.id:<14} → không ai nhận: {result.reason}")
+
+    if plan.coalitions:
+        print(
+            f"\n  {len(plan.coalitions)} nhiệm vụ do liên minh nhận "
+            f"({plan.coalition_members} lượt agent):"
+        )
+        for result in plan.results:
+            if not result.is_coalition:
+                continue
+            print(
+                f"    {result.task.id}: "
+                f"{result.agreed_effort:.2f}/{result.original_effort:.2f} công sức"
+            )
+            for share in result.coalition:
+                print(f"      • {share.agent}: {share.effort:.2f} công sức")
 
     negotiated = [r for r in plan.results if r.negotiated]
     if negotiated:
@@ -284,6 +310,66 @@ def print_negotiation() -> None:
         f"(partial = {result.partial})"
     )
     print(f"  Tải của agent sau khi nhận: {agent.state.load:.2f}/{agent.state.capacity:.2f}")
+    print("\n  Tóm tắt:")
+    for line in summarize([result]).splitlines():
+        print(f"    {line}")
+
+
+def print_coalition() -> None:
+    """In một cuộc thương lượng mà nhiều agent cùng đứng ra nhận một việc lớn.
+
+    Kịch bản này cho thấy điểm khác biệt so với `print_negotiation`: ở đó chỉ có
+    một agent nên cách duy nhất là cắt bớt phạm vi. Ở đây cả nhóm cộng lại đủ
+    sức, nên không phải cắt gì — chỉ chia việc ra cho nhiều người.
+    """
+    print("\n[14] LIÊN MINH AGENT (nhiều người cùng nhận một việc lớn)")
+    bus = MessageBus()
+    net = ContractNet(bus)
+
+    agents = [
+        AutonomousAgent(key, skills=["scheduling"], capacity=0.4)
+        for key in ("scheduler-1", "scheduler-2", "scheduler-3")
+    ]
+    task = Task(
+        id="xep-lich-thang",
+        description="Xếp lịch chi tiết cho cả tháng",
+        skill="scheduling",
+        priority=1,
+        effort=0.9,
+    )
+    print(f"  Ba agent, mỗi người chỉ còn {agents[0].state.available:.2f} năng lực.")
+    print(f"  Nhiệm vụ cần {task.effort:.2f} công sức — không ai nhận trọn được.")
+    print("  Nhưng cộng lại là 1.20, thừa sức. Không cần cắt bớt việc.\n")
+
+    result = net.run(task, agents)
+    for record in result.rounds:
+        mark = "✓" if record.ok else "✗"
+        print(f"  {mark} Vòng {record.round}: công sức {record.task.effort:.2f}")
+        if record.relaxation:
+            print(f"      nới điều khoản: {record.relaxation}")
+        if record.is_coalition:
+            print("      → liên minh nhận:")
+            for share in record.coalition:
+                print(f"          • {share.agent}: {share.effort:.2f} công sức")
+        elif record.ok:
+            print(f"      → {record.awarded_to} nhận ({record.reason})")
+        else:
+            print(f"      → không ai nhận: {record.reason}")
+
+    print(f"\n  Kết quả: {result.round_count} vòng, liên minh = {result.members}")
+    print(
+        f"  Phạm vi đã chốt: {result.agreed_effort:.2f}/"
+        f"{result.original_effort:.2f} công sức"
+    )
+    print(
+        f"  Còn lại chưa ai nhận: {result.remaining_effort:.2f} công sức "
+        f"(partial = {result.partial})"
+    )
+    print("  Tải từng người sau khi nhận:")
+    for agent in agents:
+        print(
+            f"    {agent.key}: {agent.state.load:.2f}/{agent.state.capacity:.2f}"
+        )
     print("\n  Tóm tắt:")
     for line in summarize([result]).splitlines():
         print(f"    {line}")
@@ -530,6 +616,11 @@ def main() -> None:
         help="In một cuộc thương lượng nhiều vòng khi năng lực nhóm bị chặt",
     )
     parser.add_argument(
+        "--coalition",
+        action="store_true",
+        help="In một cuộc thương lượng mà nhiều agent cùng nhận một việc lớn",
+    )
+    parser.add_argument(
         "--async",
         dest="run_async",
         action="store_true",
@@ -605,6 +696,9 @@ def main() -> None:
 
     if args.negotiate:
         print_negotiation()
+
+    if args.coalition:
+        print_coalition()
 
     if args.run_async:
         print_async_runtime()

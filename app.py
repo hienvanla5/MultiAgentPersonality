@@ -665,15 +665,19 @@ def render_team(goal: str, llm) -> None:
     st.markdown("**Kết quả thương lượng**")
     st.caption(
         "Nếu cả nhóm từ chối vì nhiệm vụ đòi hỏi nhiều công sức hơn phần năng "
-        "lực còn trống, bộ điều phối công bố lại với phạm vi chia nhỏ cho vừa "
-        "(tối đa vài vòng). Kỹ năng thì không nới — giao việc ngoài chuyên môn "
-        "còn tệ hơn để việc đó chưa ai làm."
+        "lực còn trống, bộ điều phối công bố lại để **nhiều agent cùng nhận** "
+        "(liên minh), hoặc chia nhỏ phạm vi cho vừa một người. Kỹ năng thì không "
+        "nới — giao việc ngoài chuyên môn còn tệ hơn để việc đó chưa ai làm."
     )
     st.dataframe(
         [
             {
                 "Nhiệm vụ": result.task.id,
-                "Người nhận": result.awarded_to or "—",
+                "Người nhận": (
+                    " + ".join(share.agent for share in result.coalition)
+                    if result.is_coalition
+                    else (result.awarded_to or "—")
+                ),
                 "Số thầu": result.bid_count,
                 "Từ chối": len(result.refusals),
                 "Vòng": result.round_count,
@@ -689,6 +693,29 @@ def render_team(goal: str, llm) -> None:
         use_container_width=True,
         hide_index=True,
     )
+
+    if team_plan.coalitions:
+        with st.expander(
+            f"{len(team_plan.coalitions)} nhiệm vụ do liên minh nhận", expanded=True
+        ):
+            st.caption(
+                "Không ai đủ sức nhận trọn nên bộ điều phối công bố lại với "
+                "'nhận một phần cũng được'. Các agent tự bỏ thầu phần mình làm "
+                "được, rồi được ghép lại thành một liên minh — không ai bị gán "
+                "việc ngoài phần mình đã đề nghị."
+            )
+            for result in team_plan.results:
+                if not result.is_coalition:
+                    continue
+                st.markdown(
+                    f"**{result.task.id}** — "
+                    f"{result.agreed_effort:.2f}/{result.original_effort:.2f} công sức"
+                )
+                for share in result.coalition:
+                    st.text(
+                        f"• {share.agent}: {share.effort:.2f} công sức "
+                        f"(tin cậy {share.confidence:.2f})"
+                    )
 
     negotiated = [r for r in team_plan.results if r.negotiated]
     if negotiated:
