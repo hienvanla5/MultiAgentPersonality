@@ -113,6 +113,40 @@ tử thực sự**, nơi cấu trúc nhóm không được lập trình sẵn:
 agent tự tính điểm phù hợp dựa trên trạng thái nội bộ (năng lực còn trống, kỹ
 năng, số việc đã làm, độ tin cậy) rồi tự quyết định bỏ thầu hay từ chối.
 
+### 2.2. Liên minh: nhiều agent cùng nhận một việc lớn
+
+Một nhiệm vụ có thể lớn hơn năng lực của **từng** người nhưng vẫn nằm trong tầm
+của cả nhóm. Khi đó bộ điều phối không cắt bớt việc — nó công bố lại nhiệm vụ
+với đúng một thay đổi: **nhận một phần cũng được**.
+
+```
+   việc 0.90, ba agent mỗi người còn 0.40
+
+   Vòng 1  công bố trọn 0.90        → cả ba từ chối (0.90 > 0.40)
+   Vòng 2  "nhận một phần cũng được" → ba giá thầu: 0.40 / 0.40 / 0.40
+           ghép lại                  → liên minh phủ 0.90/0.90
+           (không còn phần nào chưa ai nhận)
+```
+
+Nếu không có liên minh thì hệ thống chỉ còn cách cắt phạm vi còn 0.40 và báo
+"0.50 chưa ai nhận" — mất hơn nửa công việc dù nhóm thừa sức.
+
+Bốn điều đáng nói về cách làm này:
+
+- **Vẫn là agent tự quyết.** Vòng liên minh chỉ là một lần công bố lại; ai bỏ
+  thầu phần mình làm được thì vào, ai không muốn thì thôi. Bộ điều phối không
+  chia phần cho người chưa đề nghị.
+- **Chỉ liên minh khi cần.** Một người nhận trọn được thì vẫn nhận trọn — chia
+  một việc mà một người làm gọn cho ba người chỉ thêm chi phối hợp.
+- **Không bao giờ quá tải.** Phần mỗi người nhận không vượt năng lực còn trống
+  của chính người đó, và phần đó mới là phần được ghi vào tải của họ.
+- **Liên minh đứng trước việc cắt phạm vi**, vì nó phủ được nhiều hơn hoặc bằng.
+  Cắt phạm vi vẫn giữ nguyên làm đường lui.
+
+Xem trực tiếp: `uv run python scripts/demo_run.py --coalition` (mục `[14]`), và
+đối chiếu với `--negotiate` (mục `[12]`) — ở đó chỉ có **một** agent nên cách duy
+nhất là cắt bớt phạm vi.
+
 ---
 
 ## 3. Cài đặt & chạy
@@ -187,6 +221,18 @@ Kịch bản này cố ý thu nhỏ năng lực của agent xuống dưới mứ
 lộ ra hành vi mà kịch bản thường không thấy: cả nhóm từ chối ở vòng 1, bộ điều
 phối công bố lại với phạm vi chia nhỏ ở vòng 2, và phần công sức chưa ai nhận
 được ghi rõ thay vì im lặng coi như đã giao xong.
+
+**Xem liên minh nhiều agent cùng nhận một việc lớn:**
+
+```powershell
+uv run python scripts/demo_run.py --coalition --skip-adjust
+```
+
+Ba agent, mỗi người chỉ còn 0,40 năng lực, cùng nhận một việc 0,90. Không ai
+nhận trọn được, nhưng cộng lại là 1,20 — nên hệ thống **không cắt bớt việc**:
+nó công bố lại với "nhận một phần cũng được" rồi ghép ba phần thành một liên
+minh phủ trọn 0,90/0,90. In ra cả phần mỗi người nhận và tải của từng người sau
+khi nhận, để thấy không ai bị quá tải.
 
 **Xem agent chạy nền thật:**
 
@@ -329,7 +375,7 @@ src/lifeos/
 ├── agents/
 │   ├── career.py … orchestrator.py   # 6 agent chuyên trách
 │   ├── autonomy.py      # AgentState + AutonomousAgent (tự trị)
-│   ├── contract_net.py  # thương lượng phân việc nhiều vòng (Contract Net)
+│   ├── contract_net.py  # thương lượng phân việc: nhiều vòng + liên minh
 │   └── team.py          # phân rã mục tiêu + tự lập nhóm
 ├── memory/
 │   ├── store.py         # SQLite: kế hoạch, sự kiện điều chỉnh, thẻ ôn tập
@@ -353,9 +399,12 @@ uv run pytest -q
 - `test_contract_net.py` — đủ 4 pha thương lượng, trao thầu tất định, hết năng lực
 - `test_multi_round.py` — công bố lại khi công sức vượt năng lực, chia nhỏ phạm
   vi, ghi rõ phần chưa ai nhận, không bao giờ giao quá tải
+- `test_coalition.py` — liên minh: phủ được việc mà một người không làm nổi,
+  không quá tải, tôn trọng chuyên môn, tất định, và giữ nguyên hành vi cũ khi
+  chỉ một người là đủ
 - `test_runtime.py` — agent chạy nền thật: đồng thời thật (đo bằng thời gian),
   agent chậm không chặn người khác, agent lỗi không làm sập runtime, tắt máy có
-  chặn thời gian
+  chặn thời gian, và liên minh cho cùng kết quả như đường đồng bộ
 - `test_google_calendar.py` — PKCE, URL uỷ quyền, làm mới token, lưu token, hàm
   chuyển lịch thành sự kiện, đồng bộ idempotent, và server nhận chuyển hướng
   trên localhost. Chạy **không cần mạng và không cần credentials thật**
@@ -487,7 +536,7 @@ này. Cột "trước" ghi trung thực cả những chỗ còn thiếu.
 | 2 | **Tương tác** (Social Ability) | ⚠️ Có `Roundtable` nhưng chỉ là văn bản để hiển thị, không có hành vi giao tiếp | ✅ `ACLMessage` có **performative** (request/inform/propose/refuse/accept-proposal…) + `MessageBus` ghép hội thoại | `acl.py` |
 | 3 | **Cộng tác & phân phối** | ⚠️ `synthesize()` chỉ tổng hợp văn bản; việc phân rã do đồ thị hard-code | ✅ Bộ điều phối **phân rã mục tiêu bằng LLM** rồi giao qua thương lượng; LLM lỗi thì có lưới an toàn bằng quy tắc | `agents/team.py` |
 | 4 | **Chuyên môn hóa** | ✅ Đã có — 6 persona, mỗi agent một module riêng | ✅ Giữ nguyên, nay kèm khai báo kỹ năng máy đọc được (`AGENT_SKILLS`) | `personas/registry.py` |
-| 5 | **Thương lượng** (Negotiation) | ❌ **Không có gì** — phản biện nói "quá tải" thì đồ thị tự giảm tải, không ai thương lượng | ✅ **Contract Net Protocol** đủ 4 pha, **công bố lại nhiều vòng** khi công sức vượt năng lực | `agents/contract_net.py` |
+| 5 | **Thương lượng** (Negotiation) | ❌ **Không có gì** — phản biện nói "quá tải" thì đồ thị tự giảm tải, không ai thương lượng | ✅ **Contract Net Protocol** đủ 4 pha, **công bố lại nhiều vòng** khi công sức vượt năng lực, và **liên minh** khi một người không đủ sức nhận trọn | `agents/contract_net.py` |
 | 6 | **Tự tổ chức** (Self-Organization) | ❌ Thứ tự node cố định trong `StateGraph` | ✅ Nhóm **co giãn theo việc**: ai không có nhiệm vụ phù hợp thì không được mời; thêm agent mới chỉ cần khai báo kỹ năng | `agents/team.py` |
 | 7 | **Mở rộng & song song** | ❌ Chạy tuần tự hoàn toàn | ✅ Hai mức: `map_parallel` cho các bước độc lập, và **runtime asyncio** cho agent chạy nền thật với hộp thư riêng | `parallel.py`, `runtime.py` |
 | 8 | **Học liên tục** | ⚠️ Bộ nhớ **chỉ ghi** — `memory.search()` chưa bao giờ được gọi trong luồng thật | ✅ **Suy ngẫm** trước khi lập kế hoạch: đọc lại ký ức + tỉ lệ hoàn thành thật để tự hạ mức tải | `reflection.py` |
@@ -588,8 +637,21 @@ tại chỗ** (có test kiểm chứng).
   không agent nào có chuyên môn phù hợp thì dừng ngay ở vòng 1 thay vì công bố
   lại vô ích. Việc chưa ai nhận được ghi rõ thành `remaining_effort`, nhưng hệ
   thống chưa tự đề xuất cách xử lý (tăng năng lực, đổi người, hay bỏ việc).
-- Chưa có **liên minh** giữa các agent: mỗi nhiệm vụ vẫn chỉ một agent nhận,
-  chưa có nhóm agent cùng đứng ra nhận một việc lớn.
+- **Liên minh có, nhưng còn hẹp.** Nhiều agent cùng nhận một việc lớn đã chạy
+  thật (xem §2.2). Những gì liên minh **chưa** làm:
+  - Không có **trưởng nhóm điều phối nội bộ**: các thành viên nhận phần của mình
+    rồi thôi, chưa có ai điều phối hay tổng hợp kết quả giữa họ.
+  - Không có **thành viên vào/ra giữa chừng**: một người làm không xong thì phần
+    đó chưa được thương lượng lại.
+  - Mọi thành viên phải **cùng một kỹ năng**. Chưa chia được một mục tiêu thành
+    các việc khác kỹ năng để nhiều chuyên môn cùng nhận (việc đó vẫn do bước
+    phân rã `decompose` lo, và nó đã tách sẵn thành nhiều nhiệm vụ).
+  - Không **xếp chồng** liên minh với cắt phạm vi: liên minh đã vét hết người
+    sẵn lòng, nên phần còn thiếu (nếu có) được báo thẳng ra thay vì chia tiếp.
+  - **Đường bất đồng bộ chưa có vòng cắt phạm vi** (`_relax`) như đường đồng bộ.
+    Liên minh thì đã có ở cả hai đường và cho cùng kết quả; nhưng nếu một việc
+    vừa không ai nhận trọn vừa không ghép được liên minh thì đường bất đồng bộ
+    dừng, còn đường đồng bộ còn một vòng chia nhỏ phạm vi nữa.
 - Học liên tục dựa trên **tỉ lệ hoàn thành**, chưa học từ nội dung phản hồi
   dạng văn bản của người dùng.
 - Phân rã bằng LLM **có lưới an toàn**: nếu LLM lỗi, trả về ít hơn 2 nhiệm vụ,
@@ -599,8 +661,9 @@ tại chỗ** (có test kiểm chứng).
 - LLM có thể đề xuất **kỹ năng mà không agent nào có**; hệ thống giữ nguyên
   nhiệm vụ đó và báo "không ai nhận" thay vì tự gán bừa cho một agent.
 
-**Hướng mở rộng:** liên minh agent cho việc lớn, hàng đợi tin bền (message
-broker), `tools/search.py` thật, và bộ test eval lớn hơn.
+**Hướng mở rộng:** trưởng nhóm điều phối trong liên minh (kèm thương lượng lại khi
+một thành viên làm không xong), hàng đợi tin bền (message broker),
+`tools/search.py` thật, và bộ test eval lớn hơn.
 
 ---
 
