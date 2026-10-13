@@ -46,6 +46,10 @@ class Bid(BaseModel):
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     cost: float = Field(default=0.3, ge=0.0, le=1.0)
     reason: str = ""
+    #: Công sức agent này nhận. Bằng `task.effort` khi nhận trọn nhiệm vụ; nhỏ
+    #: hơn khi chỉ nhận được một phần (chỉ xảy ra ở vòng liên minh). Giá trị 0
+    #: nghĩa là "không nêu" và được coi như nhận trọn — xem `contract_net.share_of`.
+    share: float = Field(default=0.0, ge=0.0, le=1.0)
 
     @property
     def score(self) -> float:
@@ -131,8 +135,15 @@ class AutonomousAgent:
         # Nhiệm vụ không ghi kỹ năng thì ai cũng nhận được; có ghi thì phải khớp.
         return not task.skill or task.skill in self.state.skills
 
-    def assess(self, task: Task) -> Bid | Refusal:
-        """Tự đánh giá nhiệm vụ: trả về giá thầu, hoặc từ chối kèm lý do."""
+    def assess(self, task: Task, *, allow_partial: bool = False) -> Bid | Refusal:
+        """Tự đánh giá nhiệm vụ: trả về giá thầu, hoặc từ chối kèm lý do.
+
+        `allow_partial=True` cho phép bỏ thầu cho **một phần** công sức khi
+        không đủ sức nhận trọn. Chỉ bật ở vòng liên minh: biết mình làm được
+        một phần là thông tin hữu ích, còn hơn từ chối rồi để việc đó không ai
+        làm. Phần nhận không bao giờ vượt năng lực còn trống. Mặc định `False`
+        giữ nguyên hành vi cũ.
+        """
         if task.skill and task.skill not in self.state.skills:
             self.state.refused += 1
             return Refusal(
@@ -148,30 +159,44 @@ class AutonomousAgent:
                 reason="đã hết năng lực",
             )
         if task.effort > self.state.available:
-            self.state.refused += 1
-            return Refusal(
-                agent=self.key,
-                task_id=task.id,
-                reason=(
-                    f"nhiệm vụ cần {task.effort:.2f} nhưng chỉ còn "
-                    f"{self.state.available:.2f} năng lực"
-                ),
-            )
+            if not allow_partial:
+                self.state.refused += 1
+                return Refusal(
+                    agent=self.key,
+                    task_id=task.id,
+                    reason=(
+                        f"nhiệm vụ cần {task.effort:.2f} nhưng chỉ còn "
+                        f"{self.state.available:.2f} năng lực"
+                    ),
+                )
+            # Nhận một phần. Không tăng `refused`: đây là một lời đề nghị, không
+            # phải một lời từ chối.
+            return self._bid(task, share=self.state.available, partial=True)
 
+        return self._bid(task, share=task.effort)
+
+    def _bid(self, task: Task, *, share: float, partial: bool = False) -> Bid:
+        """Dựng giá thầu cho phần công sức `share` mình sẽ nhận."""
         # Còn năng lực: tự tin hơn nếu cùng lúc còn trống nhiều và đã làm tốt.
         confidence = min(
             1.0, 0.4 + 0.4 * (self.state.available / self.state.capacity) + 0.2 * self.state.trust
         )
-        cost = min(1.0, task.effort / max(self.state.capacity, 1e-6))
+        cost = min(1.0, share / max(self.state.capacity, 1e-6))
+        reason = (
+            f"chỉ nhận được {share:.2f}/{task.effort:.2f} công sức"
+            if partial
+            else (
+                f"còn {self.state.available:.2f} năng lực, "
+                f"đã hoàn thành {self.state.completed} việc"
+            )
+        )
         return Bid(
             agent=self.key,
             task_id=task.id,
             confidence=round(confidence, 4),
             cost=round(cost, 4),
-            reason=(
-                f"còn {self.state.available:.2f} năng lực, "
-                f"đã hoàn thành {self.state.completed} việc"
-            ),
+            reason=reason,
+            share=share,
         )
 
     # --- vòng đời nhiệm vụ ---
