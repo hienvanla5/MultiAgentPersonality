@@ -276,3 +276,65 @@ def test_summarize_mentions_coalition():
     assert "liên minh" in text
     assert "do liên minh nhận" in text
     assert "a 0.40" in text
+
+
+# --- báo cáo trong kế hoạch nhóm ---
+
+
+def _plan_with(agents: list[AutonomousAgent]):
+    from lifeos.agents.team import GoalBreakdown, TeamPlan
+
+    net = ContractNet()
+    breakdown = GoalBreakdown(
+        goal="g",
+        tasks=[Task(id="t", description="việc", skill="scheduling", effort=0.9)],
+    )
+    return TeamPlan(
+        breakdown=breakdown,
+        members=[agent.key for agent in agents],
+        results=net.run_all(breakdown.tasks, agents),
+    )
+
+
+def test_team_plan_reports_coalitions():
+    """Kế hoạch nhóm phải nêu tên liên minh, không chỉ trưởng nhóm."""
+    plan = _plan_with(_three_halves())
+
+    assert plan.coalitions == ["t"]
+    assert plan.coalition_members == 3
+    assert plan.fully_covered is True
+    assert plan.remaining_effort == 0.0
+
+    text = plan.summary()
+    assert "liên minh" in text
+    assert "a 0.40" in text
+    assert "c 0.10" in text
+
+
+def test_team_plan_without_coalition_reports_none():
+    """Đường đi thường gặp không được sinh ra báo cáo liên minh rỗng."""
+    plan = _plan_with([_agent("scheduler", ["scheduling"], capacity=1.0)])
+
+    assert plan.coalitions == []
+    assert plan.coalition_members == 0
+    assert "liên minh" not in plan.summary()
+
+
+def test_team_plan_fully_covered_thanks_to_coalition():
+    """Điểm mấu chốt: nhóm thiếu năng lực cá nhân vẫn phủ trọn nhờ liên minh."""
+    from lifeos.agents.team import GoalBreakdown, TeamPlan
+
+    task = Task(id="t", description="việc", skill="scheduling", effort=0.9)
+    breakdown = GoalBreakdown(goal="g", tasks=[task])
+
+    alone = TeamPlan(
+        breakdown=breakdown,
+        members=["a"],
+        results=ContractNet().run_all([task], [_agent("a", ["scheduling"], capacity=0.4)]),
+    )
+    assert alone.fully_covered is False  # một mình thì phải cắt bớt phạm vi
+    assert alone.partial == ["t"]
+
+    together = _plan_with(_three_halves())
+    assert together.fully_covered is True  # ba người thì không phải cắt gì
+    assert together.partial == []

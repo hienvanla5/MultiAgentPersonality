@@ -90,6 +90,16 @@ class TeamPlan(BaseModel):
         return [r.task.id for r in self.results if r.partial]
 
     @property
+    def coalitions(self) -> list[str]:
+        """Nhiệm vụ do nhiều agent cùng đứng ra nhận."""
+        return [r.task.id for r in self.results if r.is_coalition]
+
+    @property
+    def coalition_members(self) -> int:
+        """Tổng số lượt agent tham gia các liên minh."""
+        return sum(len(r.coalition) for r in self.results if r.is_coalition)
+
+    @property
     def remaining_effort(self) -> float:
         """Tổng công sức chưa có ai nhận."""
         return round(sum(r.remaining_effort for r in self.results), 4)
@@ -113,9 +123,23 @@ class TeamPlan(BaseModel):
         lines.append(
             f"Đã giao {self.assigned_count}/{len(self.results)} nhiệm vụ."
         )
+        if self.coalitions:
+            lines.append(
+                f"{len(self.coalitions)} nhiệm vụ do liên minh nhận "
+                f"({self.coalition_members} lượt agent): "
+                f"{', '.join(self.coalitions)}."
+            )
         for result in self.results:
             mark = "✓" if result.assigned else "✗"
-            target = result.awarded_to or f"không ai nhận ({result.reason})"
+            if result.is_coalition:
+                # Nêu tên cả liên minh kèm phần mỗi người, không chỉ trưởng nhóm:
+                # chỉ ghi một cái tên sẽ che mất việc những người khác cũng nhận.
+                detail = " + ".join(
+                    f"{share.agent} {share.effort:.2f}" for share in result.coalition
+                )
+                target = f"liên minh ({detail})"
+            else:
+                target = result.awarded_to or f"không ai nhận ({result.reason})"
             suffix = ""
             if result.negotiated:
                 suffix += f" [{result.round_count} vòng]"
