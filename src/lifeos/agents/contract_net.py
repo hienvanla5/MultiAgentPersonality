@@ -345,7 +345,7 @@ class ContractNet:
         record.reason = (
             coalition_reason(task, shares)
             if shares
-            else _single_reason(next(bid for bid in bids if bid.agent == lead))
+            else single_reason(next(bid for bid in bids if bid.agent == lead))
         )
 
         # Phần mỗi agent nhận. Không phải liên minh thì nhận trọn nhiệm vụ.
@@ -609,7 +609,12 @@ def coalition_reason(task: Task, shares: list[CoalitionShare]) -> str:
     )
 
 
-def _single_reason(bid: Bid) -> str:
+def single_reason(bid: Bid) -> str:
+    """Mô tả lý do một giá thầu thắng trọn nhiệm vụ.
+
+    Đặt ở mức module để đường bất đồng bộ dùng lại đúng câu chữ này — hai đường
+    chạy mà mô tả khác nhau thì người đọc log sẽ tưởng là hai cơ chế khác nhau.
+    """
     return f"{bid.agent} thắng với điểm {bid.score:.3f} ({bid.reason})"
 
 

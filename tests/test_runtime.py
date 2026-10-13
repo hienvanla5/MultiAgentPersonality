@@ -634,3 +634,125 @@ async def test_worker_loop_survives_many_messages():
     # 20 công bố + 20 thông báo trúng thầu
     assert runtime.stats.handled == 40
     assert runtime.stats.failed == 0
+
+
+# --- liên minh trên đường bất đồng bộ ---
+
+
+def _tight(key: str, capacity: float) -> AutonomousAgent:
+    return _agent(key, ["scheduling"], capacity=capacity)
+
+
+async def test_async_negotiate_forms_coalition():
+    """Ba agent 0.40 làm việc 0.90 -> liên minh phủ trọn, như đường đồng bộ."""
+    runtime = AgentRuntime(timeout=2.0)
+    for key in ("a", "b", "c"):
+        runtime.register(_tight(key, 0.4))
+
+    async with runtime:
+        result = await runtime.negotiate(
+            _task(effort=0.9, task_id="big"), runtime.agents
+        )
+
+    assert result.is_coalition is True
+    assert len(result.coalition) == 3
+    assert result.agreed_effort == pytest.approx(0.9)
+    assert result.remaining_effort == 0.0
+    assert result.partial is False
+    assert result.round_count == 2
+
+
+async def test_async_coalition_matches_sync_result():
+    """Hai đường chạy phải ghép ra cùng một liên minh, chỉ khác cách chạy."""
+    from lifeos.agents.contract_net import ContractNet
+
+    def make() -> list[AutonomousAgent]:
+        return [_tight(key, 0.4) for key in ("a", "b", "c")]
+
+    task = _task(effort=0.9, task_id="big")
+    sync_result = ContractNet().run(task, make())
+
+    runtime = AgentRuntime(timeout=2.0)
+    for agent in make():
+        runtime.register(agent)
+    async with runtime:
+        async_result = await runtime.negotiate(
+            _task(effort=0.9, task_id="big"), runtime.agents
+        )
+
+    assert [(s.agent, round(s.effort, 6)) for s in async_result.coalition] == [
+        (s.agent, round(s.effort, 6)) for s in sync_result.coalition
+    ]
+    assert async_result.awarded_to == sync_result.awarded_to
+    assert async_result.remaining_effort == sync_result.remaining_effort
+
+
+async def test_async_coalition_does_not_overload_members():
+    """Mỗi thành viên chỉ bị tính tải bằng phần mình nhận."""
+    runtime = AgentRuntime(timeout=2.0)
+    agents = [_tight(key, 0.4) for key in ("a", "b", "c")]
+    for agent in agents:
+        runtime.register(agent)
+
+    async with runtime:
+        await runtime.negotiate(_task(effort=0.9, task_id="big"), runtime.agents)
+
+    for agent in agents:
+        assert agent.state.load <= agent.state.capacity
+    assert sum(agent.state.load for agent in agents) == pytest.approx(0.9)
+
+
+async def test_async_single_agent_still_wins_alone():
+    """Một người đủ sức thì không chia việc — chốt chặn hồi quy."""
+    runtime = AgentRuntime(timeout=2.0)
+    runtime.register(_agent("scheduler", ["scheduling"], capacity=1.0))
+
+    async with runtime:
+        result = await runtime.negotiate(_task(effort=0.3), runtime.agents)
+
+    assert result.is_coalition is False
+    assert result.coalition == []
+    assert result.awarded_to == "scheduler"
+    assert result.round_count == 1
+
+
+async def test_async_coalition_round_is_recorded():
+    """Vòng liên minh phải để lại bản ghi và cờ cho phép nhận một phần."""
+    bus = MessageBus()
+    runtime = AgentRuntime(bus, timeout=2.0)
+    for key in ("a", "b", "c"):
+        runtime.register(_tight(key, 0.4))
+
+    async with runtime:
+        await runtime.negotiate(_task(effort=0.9, task_id="big"), runtime.agents)
+
+    requests = [m for m in bus.messages if m.performative is Performative.REQUEST]
+    # 3 agent x 2 vòng
+    assert len(requests) == 6
+    second = [m for m in requests if m.metadata.get("round") == 2]
+    assert len(second) == 3
+    assert all(m.metadata.get("allow_partial") is True for m in second)
+    assert "[vòng 2]" in second[0].content
+
+    accepts = [
+        m for m in bus.messages if m.performative is Performative.ACCEPT_PROPOSAL
+    ]
+    assert len(accepts) == 3
+    assert all(m.metadata["share"] > 0 for m in accepts)
+
+
+async def test_async_max_rounds_one_disables_coalition():
+    """Liên minh cần vòng 2, nên `max_rounds=1` phải tắt được nó."""
+    runtime = AgentRuntime(timeout=2.0)
+    for key in ("a", "b", "c"):
+        runtime.register(_tight(key, 0.4))
+
+    async with runtime:
+        result = await runtime.negotiate(
+            _task(effort=0.9, task_id="big"), runtime.agents, max_rounds=1
+        )
+
+    assert result.assigned is False
+    assert result.is_coalition is False
+    assert result.round_count == 1
+    assert result.remaining_effort == pytest.approx(0.9)
